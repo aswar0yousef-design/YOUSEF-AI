@@ -27,6 +27,9 @@ PROJECT_TOOLS = ("For this step you can work in the user's project folder \"{nam
 STORE_TOOLS = ("For this step you can read the user's connected online stores and propose product changes through "
                "the tools described below. You still cannot delete products, refund or edit orders, publish posts, "
                "send messages, buy, trade, browse the web or control the computer.")
+TECH_TOOLS = ("For this step you can check the user's own connected stores, their live sites and the attached project "
+              "folder, and propose fixes through the tools described below. You still cannot publish posts, send "
+              "messages, buy, trade, delete products, check sites that are not the user's, or control the computer.")
 
 
 @dataclass(frozen=True)
@@ -39,8 +42,11 @@ class Agent:
     available: bool = True
     phase: int = 1
 
-    def system_prompt(self, rules: list[str], project: str | None = None, stores: bool = False) -> str:
-        if stores:
+    def system_prompt(self, rules: list[str], project: str | None = None, stores: bool = False,
+                      tech: bool = False) -> str:
+        if tech:
+            abilities = TECH_TOOLS
+        elif stores:
             abilities = STORE_TOOLS
         elif project is not None:
             abilities = PROJECT_TOOLS.format(name=project)
@@ -98,30 +104,47 @@ AGENTS: dict[str, Agent] = {
             "store's language.",
             phase=4,
         ),
-        Agent("ads_manager", "مدير الإعلانات", "Plans and manages ad campaigns.",
-              "analysis", available=False, phase=5),
+        Agent(
+            "tech_manager", "المدير التقني",
+            "Technical manager of the user's stores, sites and code: checks the live store site (HTTPS, security "
+            "headers, exposed files, errors, speed, technical SEO), store health (WordPress, PHP, plugins, product "
+            "data), scans the project's code and packages for vulnerabilities, leaked keys and bugs, and proposes "
+            "fixes and improvements.",
+            "code",
+            "Technical manager and security reviewer. Base every finding on a check or on code you read, and "
+            "separate confirmed problems from possible ones. Explain each problem simply: what it is, the risk, "
+            "the fix. Order by severity, most serious first.",
+            phase=5,
+        ),
         Agent("social_publisher", "ناشر السوشيال", "Publishes and schedules posts on social platforms.",
-              "writing", available=False, phase=5),
-        Agent("trading_analyst", "محلل التداول", "Market analysis, alerts and paper trading.",
+              "writing", available=False, phase=6),
+        Agent("ads_manager", "مدير الإعلانات", "Plans and manages ad campaigns.",
               "analysis", available=False, phase=6),
+        Agent("trading_analyst", "محلل التداول", "Market analysis, alerts and paper trading.",
+              "analysis", available=False, phase=7),
         Agent("device_control", "التحكم بالجهاز", "Controls apps and files on this PC.",
-              "chat", available=False, phase=6),
+              "chat", available=False, phase=7),
     ]
 }
 
 
-# agents that also need something connected before the planner may use them
-NEEDS = {"store_manager": "stores"}
+# agents that also need something connected before the planner may use them (any one of these)
+NEEDS = {"store_manager": ("stores",), "tech_manager": ("stores", "workspace")}
+# what an agent becomes when what it needs is missing: advice instead of tools
+FALLBACK = {"store_manager": "analyst", "tech_manager": "coder"}
+
+
+def _usable(agent: Agent, connected) -> bool:
+    needs = NEEDS.get(agent.key)
+    return agent.available and (not needs or any(n in connected for n in needs))
 
 
 def available_agents(connected: set[str] | frozenset = frozenset()) -> list[Agent]:
-    return [a for a in AGENTS.values() if a.available and NEEDS.get(a.key, "") in connected | {""}]
+    return [a for a in AGENTS.values() if _usable(a, connected)]
 
 
 def get_agent(key: str, connected: set[str] | frozenset = frozenset()) -> Agent:
     agent = AGENTS.get(key)
-    if agent and agent.available and NEEDS.get(agent.key, "") in connected | {""}:
+    if agent and _usable(agent, connected):
         return agent
-    if key == "store_manager":
-        return AGENTS["analyst"]  # store questions without a store connected: advice only
-    return AGENTS["general"]
+    return AGENTS[FALLBACK.get(key, "general")]

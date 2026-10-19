@@ -8,7 +8,8 @@ Flow for every request:
    With a project folder attached, the coder works through file tools and its
    edits wait for approval as diffs before anything is written. With stores
    connected, the store manager reads them and its product proposals wait for
-   approval with before/after values.
+   approval with before/after values. The technical manager checks the stores'
+   sites and the project code, and its fixes wait for approval the same way.
 4. Results are combined into one final answer and remembered.
 Everything is written to memory as it happens, so the dashboard can follow
 along, and a task interrupted by closing the app is marked as such on restart.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -34,6 +36,7 @@ from ..workspace import Services, Workspace, WorkspaceError, git, registry
 from .agents import AGENTS, available_agents, get_agent
 from .coder import run_coder
 from .store_manager import run_store_manager
+from .tech_manager import build_toolbox, run_tech_manager
 from .jsonutil import extract_json
 from .permissions import requires_approval
 
@@ -65,6 +68,11 @@ If the request needs long content (code, tables, posts, plans), put it after tha
 STORES_NOTE = """Connected online stores: {stores}. The "store_manager" agent can read their products, orders and sales and propose new products or changes (the user approves each one). Give any step that needs store data or changes to "store_manager", in ONE step when possible; other agents cannot see the stores."""
 
 WORKSPACE_NOTE = """The user attached the project folder "{name}". The "coder" agent can list, read and search its files, propose edits (the user approves each change as a diff), use git (commit, push, pull requests after approval), run the project's allowed commands and check Vercel deployments. Give any step that needs the project to "coder", in ONE step when possible."""
+
+TECH_NOTE = """The "tech_manager" agent checks {targets}: security (HTTPS, headers, exposed files, leaked keys, vulnerable code and packages), errors, speed and technical SEO, and proposes fixes for approval. Give checks, security reviews, bug hunting and technical fixes to "tech_manager"{others}."""
+
+# short requests that sound like a technical check go through the planner, which can pick the technical manager
+TECH_HINT = re.compile(r"ثغر|أمان|امان|حماي|افحص|فحص|اخطاء|أخطاء|خطأ|سرعة|بطيء|security|vulnerab|audit|scan|bug|hack|اختراق", re.I)
 
 COMPOSE_PROMPT = """Several agents worked on the user's request in steps. Write the final answer for the user from their results.
 - Keep everything the user needs complete: code, posts, drafts, tables. Do not shorten them.
@@ -143,6 +151,9 @@ class Orchestrator:
         self.stores = stores
         self.github_api = GITHUB_API
         self.vercel_api = VERCEL_API
+        self.site_auditor = None  # audit.SiteAuditor; None = live checks over the network
+        self.osv = None           # (post, get) for the vulnerability database; None = api.osv.dev
+        self.wp_latest = None     # callable returning the latest WordPress version; None = api.wordpress.org
         self._lock = threading.Lock()
         self._events: dict[int, threading.Event] = {}
         self._decisions: dict[int, tuple[bool, str]] = {}
@@ -265,7 +276,7 @@ class Orchestrator:
                 self.memory.update_task(task_id, status="failed", error=str(e))
                 return
 
-        connected = self._connected()
+        connected = self._connected(ws)
         try:
             plan = self._plan(request, history, lessons, ws, connected, job.store)
         except NoModelError as e:
@@ -282,8 +293,9 @@ class Orchestrator:
             agent = get_agent(step["agent"], connected)
             coder_in_project = ws is not None and agent.key == "coder"
             store_step = agent.key == "store_manager"
+            tech_step = agent.key == "tech_manager"
             # tool agents propose their actions; the approval comes after they work, on the real proposals
-            if step["needs_confirmation"] and not (coder_in_project or store_step):
+            if step["needs_confirmation"] and not (coder_in_project or store_step or tech_step):
                 approved = self._wait_for_approval(task_id, step_id)
                 self._take_decision(step_id)
                 if approved is None:
@@ -306,9 +318,13 @@ class Orchestrator:
                     return
                 results.append((step, outcome))
                 continue
-            if store_step:
-                outcome = self._run_store_step(task_id, step_id, agent, step, request, history, results,
-                                               lessons, speak, job.store)
+            if store_step or tech_step:
+                if tech_step:
+                    outcome = self._run_tech_step(task_id, step_id, agent, step, request, history, results,
+                                                  lessons, speak, ws, job.store)
+                else:
+                    outcome = self._run_store_step(task_id, step_id, agent, step, request, history, results,
+                                                   lessons, speak, job.store)
                 if outcome is None:
                     if self._is_cancelled(task_id) or self._shutdown.is_set():
                         self._stop(task_id, step_ids)
@@ -337,8 +353,13 @@ class Orchestrator:
         self.memory.update_task(task_id, status="done", final=final)
         self.memory.add_message("assistant", final, task_id)
 
-    def _connected(self) -> frozenset:
-        return frozenset({"stores"}) if self.stores and self.stores.entries() else frozenset()
+    def _connected(self, ws: Workspace | None = None) -> frozenset:
+        found = set()
+        if self.stores and self.stores.entries():
+            found.add("stores")
+        if ws is not None:
+            found.add("workspace")
+        return frozenset(found)
 
     def _plan(self, request: str, history: list[dict], lessons: list[dict],
               ws: Workspace | None = None, connected: frozenset = frozenset(), store: str | None = None) -> list[dict]:
@@ -346,6 +367,8 @@ class Orchestrator:
         # a short request skips the planner, unless stores are connected and none was picked:
         # "كم طلب اليوم؟" must reach the store manager, which only the planner can decide
         obvious = ws is not None or store is not None or "stores" not in connected
+        if obvious and connected and TECH_HINT.search(request):
+            obvious = False  # "افحص متجري" belongs to the technical manager, which the planner picks
         if len(request) <= SHORT_REQUEST and "\n" not in request and obvious:
             return [{"agent": default, "instruction": request,
                      "needs_confirmation": requires_approval(request, False)}]
@@ -366,6 +389,15 @@ class Orchestrator:
                 picked = self.stores.find(store)
                 if picked:
                     system += f'\nThe user picked the store "{picked["name"]}" for this request.'
+        if connected:
+            targets = " and ".join(t for t in (("the connected stores and their live sites" if "stores" in connected else ""),
+                                               (f'the project folder "{ws.name}"' if ws else "")) if t)
+            others = []
+            if ws:
+                others.append('new features and ordinary code changes stay with "coder"')
+            if "stores" in connected:
+                others.append('products, prices, offers and sales stay with "store_manager"')
+            system += "\n\n" + TECH_NOTE.format(targets=targets, others="; " + "; ".join(others) if others else "")
         messages = [{"role": "system", "content": system}]
         if history:
             context = "\n".join(f"{m['role']}: {m['content'][:500]}" for m in history[-4:])
@@ -397,49 +429,129 @@ class Orchestrator:
         with self._lock:
             return self._scopes.pop(step_id, "all"), self._excludes.pop(step_id, set())
 
-    def _run_store_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
-                        history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
-                        speak: bool, store: str | None) -> str | None:
-        """Tool loop over the stores, then approval of the proposed product changes."""
+    def _system(self, agent, lessons: list[dict], speak: bool, **kwargs) -> str:
         rules, outcomes = _lessons_text(lessons)
-        system = agent.system_prompt(rules, stores=True)
+        system = agent.system_prompt(rules, **kwargs)
         if outcomes:
             system += "\n\n" + outcomes
         if speak:
             system += "\n\n" + VOICE_HINT
+        return system
+
+    def _fail_step(self, task_id: int, step_id: int, error: Exception) -> None:
+        self.memory.update_step(step_id, status="failed", error=str(error), finished_at=time.time())
+        self.memory.update_task(task_id, status="failed", error=str(error))
+
+    def _run_store_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                        history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                        speak: bool, store: str | None) -> str | None:
+        """Tool loop over the stores, then approval of the proposed product changes."""
+        system = self._system(agent, lessons, speak, stores=True)
         try:
             res = run_store_manager(self.router, self.stores, system, self._step_parts(step, request, history, results),
                                     default_store=store)
         except NoModelError as e:
-            self.memory.update_step(step_id, status="failed", error=str(e), finished_at=time.time())
-            self.memory.update_task(task_id, status="failed", error=str(e))
+            self._fail_step(task_id, step_id, e)
             return None
-        output = res.text
-        actions = res.toolbox.action_list()
-        self.memory.update_step(step_id, output=output, provider=res.provider, model=res.model,
+        return self._finish_tool_step(task_id, step_id, res, [], res.toolbox.action_list())
+
+    def _run_tech_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                       history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                       speak: bool, ws: Workspace | None, store: str | None) -> str | None:
+        """Checks of the stores' sites and the project, then approval of the proposed fixes."""
+        system = self._system(agent, lessons, speak, tech=True)
+        services = self._services(ws) if ws else None
+        toolbox = build_toolbox(self.stores, store, ws, services, auditor=self.site_auditor, osv=self.osv,
+                                wp_latest=self.wp_latest)
+        try:
+            res = run_tech_manager(self.router, toolbox, system, self._step_parts(step, request, history, results))
+        except NoModelError as e:
+            self._fail_step(task_id, step_id, e)
+            return None
+        return self._finish_tool_step(task_id, step_id, res, toolbox.change_list(), toolbox.action_list(), ws, services)
+
+    def _run_coder_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                        history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                        speak: bool, ws: Workspace) -> str | None:
+        """Tool loop in the project, then approval of the proposed diffs. Returns the step's output."""
+        system = self._system(agent, lessons, speak, project=ws.name)
+        services = self._services(ws)
+        try:
+            res = run_coder(self.router, ws, system, self._step_parts(step, request, history, results),
+                            services=services)
+        except NoModelError as e:
+            self._fail_step(task_id, step_id, e)
+            return None
+        return self._finish_tool_step(task_id, step_id, res, res.toolbox.change_list(), res.toolbox.action_list(),
+                                      ws, services)
+
+    def _finish_tool_step(self, task_id: int, step_id: int, res, changes: list[dict], actions: list[dict],
+                          ws: Workspace | None = None, services: Services | None = None) -> str | None:
+        self.memory.update_step(step_id, output=res.text, provider=res.provider, model=res.model,
                                 trace=json.dumps(res.toolbox.trace, ensure_ascii=False))
-        if actions:
-            self.memory.add_actions(task_id, step_id, actions)
-            approved = self._wait_for_approval(task_id, step_id)
-            _, excluded = self._take_decision(step_id)
-            pending = self.memory.get_actions(step_id, "pending")
-            if approved is None:
-                for a in pending:
-                    self.memory.update_action(a["id"], "rejected", "أُلغيت المهمة")
-                return None
-            if approved:
-                chosen = []
-                for a in pending:
-                    if a["id"] in excluded:
-                        self.memory.update_action(a["id"], "rejected", "استبعدتها من الموافقة")
-                    else:
-                        chosen.append(a)
-                output += "\n\n" + (self._run_store_actions(chosen) if chosen else "**المتجر:** لم تختر أي تغيير.")
+        output = self._settle(task_id, step_id, res.text, changes, actions, ws, services)
+        if output is not None:
+            self.memory.update_step(step_id, status="done", output=output, finished_at=time.time())
+        return output
+
+    def _settle(self, task_id: int, step_id: int, output: str, changes: list[dict], actions: list[dict],
+                ws: Workspace | None, services: Services | None) -> str | None:
+        """Wait for the user's decision on an agent's proposals, then carry out what was approved:
+        files first, then git (commit, push, pull request), then store changes.
+        Returns the step's output, or None when the task was cancelled."""
+        if not (changes or actions):
+            return output
+        self.memory.add_changes(task_id, step_id, changes)
+        self.memory.add_actions(task_id, step_id, actions)
+        approved = self._wait_for_approval(task_id, step_id)
+        scope, excluded = self._take_decision(step_id)
+        pending = self.memory.get_changes(step_id, "pending")
+        pending_actions = self.memory.get_actions(step_id, "pending")
+        had_store = any(a["kind"].startswith("store_") for a in pending_actions)
+        if approved is None:
+            for c in pending:
+                self.memory.update_change(c["id"], "rejected", "أُلغيت المهمة")
+            for a in pending_actions:
+                self.memory.update_action(a["id"], "rejected", "أُلغيت المهمة")
+            return None
+        if not approved:
+            for c in pending:
+                self.memory.update_change(c["id"], "rejected")
+            for a in pending_actions:
+                self.memory.update_action(a["id"], "rejected")
+            only_store = had_store and not pending and all(a["kind"].startswith("store_") for a in pending_actions)
+            return output + "\n\n" + ("**تغييرات المتجر:** رفضها المستخدم، ولم يتغيّر شيء." if only_store
+                                      else "**التعديلات:** رفضها المستخدم، ولم يُنفَّذ شيء.")
+        chosen = []
+        for a in pending_actions:
+            if a["id"] in excluded:
+                self.memory.update_action(a["id"], "rejected", "استبعدتها من الموافقة")
             else:
-                for a in pending:
-                    self.memory.update_action(a["id"], "rejected")
-                output += "\n\n**تغييرات المتجر:** رفضها المستخدم، ولم يتغيّر شيء."
-        self.memory.update_step(step_id, status="done", output=output, finished_at=time.time())
+                chosen.append(a)
+        git_actions = [a for a in chosen if not a["kind"].startswith("store_")]
+        store_actions = [a for a in chosen if a["kind"].startswith("store_")]
+        applied, summary = self._apply_changes(ws, pending) if pending and ws else ([], "")
+        if summary:
+            output += "\n\n" + summary
+        if scope == "files" and (git_actions or store_actions):
+            for a in git_actions + store_actions:
+                self.memory.update_action(a["id"], "rejected", "اخترت تطبيق الملفات فقط")
+            if git_actions:
+                output += "\n\n**git:** لم يُنفَّذ (اخترت تطبيق الملفات فقط)."
+            if store_actions:
+                output += "\n\n**المتجر:** لم يتغيّر (اخترت تطبيق الملفات فقط)."
+            return output
+        if git_actions:
+            if pending and not applied:
+                for a in git_actions:
+                    self.memory.update_action(a["id"], "skipped", "لم يُكتب أي ملف")
+                output += "\n\n**git:** لم يُنفَّذ لأن الملفات لم تُكتب."
+            else:
+                output += "\n\n" + self._run_actions(ws, services, git_actions, applied)
+        if store_actions:
+            output += "\n\n" + self._run_store_actions(store_actions)
+        elif had_store and not pending:
+            output += "\n\n**المتجر:** لم تختر أي تغيير."
         return output
 
     def _run_store_actions(self, actions: list[dict]) -> str:
@@ -492,70 +604,6 @@ class Orchestrator:
                 self.memory.update_action(action["id"], "failed", str(e)[:500])
                 lines.append(f"- تعذّر تنفيذ «{label}»: {e}")
         return "**تغييرات المتجر:**\n" + "\n".join(lines)
-
-    def _run_coder_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
-                        history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
-                        speak: bool, ws: Workspace) -> str | None:
-        """Tool loop in the project, then approval of the proposed diffs. Returns the step's output."""
-        rules, outcomes = _lessons_text(lessons)
-        system = agent.system_prompt(rules, project=ws.name)
-        if outcomes:
-            system += "\n\n" + outcomes
-        if speak:
-            system += "\n\n" + VOICE_HINT
-        services = self._services(ws)
-        try:
-            res = run_coder(self.router, ws, system, self._step_parts(step, request, history, results),
-                            services=services)
-        except NoModelError as e:
-            self.memory.update_step(step_id, status="failed", error=str(e), finished_at=time.time())
-            self.memory.update_task(task_id, status="failed", error=str(e))
-            return None
-        trace = json.dumps(res.toolbox.trace, ensure_ascii=False)
-        output = res.text
-        changes = res.toolbox.change_list()
-        actions = res.toolbox.action_list()
-        self.memory.update_step(step_id, output=output, provider=res.provider, model=res.model, trace=trace)
-        if changes or actions:
-            self.memory.add_changes(task_id, step_id, changes)
-            self.memory.add_actions(task_id, step_id, actions)
-            approved = self._wait_for_approval(task_id, step_id)
-            scope, excluded = self._take_decision(step_id)
-            pending = self.memory.get_changes(step_id, "pending")
-            pending_actions = self.memory.get_actions(step_id, "pending")
-            if approved:
-                for a in [a for a in pending_actions if a["id"] in excluded]:
-                    self.memory.update_action(a["id"], "rejected", "استبعدتها من الموافقة")
-                pending_actions = [a for a in pending_actions if a["id"] not in excluded]
-            if approved is None:
-                for c in pending:
-                    self.memory.update_change(c["id"], "rejected", "أُلغيت المهمة")
-                for a in pending_actions:
-                    self.memory.update_action(a["id"], "rejected", "أُلغيت المهمة")
-                return None
-            if approved:
-                applied, summary = self._apply_changes(ws, pending) if pending else ([], "")
-                if summary:
-                    output += "\n\n" + summary
-                if pending_actions:
-                    if scope == "files":
-                        for a in pending_actions:
-                            self.memory.update_action(a["id"], "rejected", "اخترت تطبيق الملفات فقط")
-                        output += "\n\n**git:** لم يُنفَّذ (اخترت تطبيق الملفات فقط)."
-                    elif pending and not applied:
-                        for a in pending_actions:
-                            self.memory.update_action(a["id"], "skipped", "لم يُكتب أي ملف")
-                        output += "\n\n**git:** لم يُنفَّذ لأن الملفات لم تُكتب."
-                    else:
-                        output += "\n\n" + self._run_actions(ws, services, pending_actions, applied)
-            else:
-                for c in pending:
-                    self.memory.update_change(c["id"], "rejected")
-                for a in pending_actions:
-                    self.memory.update_action(a["id"], "rejected")
-                output += "\n\n**التعديلات:** رفضها المستخدم، ولم يُنفَّذ شيء."
-        self.memory.update_step(step_id, status="done", output=output, finished_at=time.time())
-        return output
 
     def _services(self, ws: Workspace) -> Services:
         entry = registry.find(self.settings, ws.name) or {}

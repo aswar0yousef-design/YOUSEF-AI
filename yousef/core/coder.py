@@ -19,6 +19,7 @@ Rules:
   After approval they run in this order: write files, commit, push, open the pull request. Never claim any of it already happened.
 - "run" works on the files on disk, so it does not see your proposed edits yet.
 - Secret files (.env, keys, certificates, wp-config.php) are blocked; do not try to read them.
+- Keys and passwords written inside files are shown as markers like [[SECRET_1]]. Keep a marker exactly as it is when your edit keeps that value; never guess or write out the real value.
 - When you can answer, reply with "done": explain what you found and which files you changed and why, in the user's language.
 - You have at most {limit} tool calls."""
 

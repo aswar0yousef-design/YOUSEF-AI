@@ -2,7 +2,8 @@
 
 Reads see the agent's own proposed changes (an overlay), so it can make
 several edits to the same file. Nothing touches the disk here: write_file and
-replace only add to `changes`, which the user reviews as diffs.
+replace only add to `changes`, which the user reviews as diffs. Keys written
+into files are shown to the model as [[SECRET_n]] markers (see secrets.py).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from dataclasses import dataclass, field
 
 from . import git
 from .files import MAX_WRITE_BYTES, READ_WINDOW, Workspace, WorkspaceError, make_diff
+from .secrets import SecretMasker
 
 OBSERVATION_LIMIT = 8000
 RUN_TIMEOUT = 300
@@ -76,6 +78,7 @@ class Toolbox:
         self.changes: dict[str, dict] = {}  # path -> {"old_text", "new_text"}
         self.actions: dict[str, dict] = {}  # kind -> payload; run after approval
         self.trace: list[dict] = []
+        self.masker = SecretMasker()
 
     def help(self) -> str:
         """The tools this project can use, for the model's instructions."""
@@ -129,7 +132,7 @@ class Toolbox:
             handler = getattr(self, f"tool_{tool}", None)
             if handler is None:
                 raise WorkspaceError(f'unknown tool "{tool}". Available tools:\n{TOOL_HELP}')
-            result = handler(call)
+            result = self.masker.mask(handler(call))
             self.trace.append({"tool": tool, "target": target[:200], "ok": True})
             return _clip(result)
         except (WorkspaceError, OSError, TypeError, ValueError) as e:
@@ -168,6 +171,7 @@ class Toolbox:
         old, new = call.get("old"), call.get("new")
         if not rel or not isinstance(old, str) or not isinstance(new, str) or not old:
             raise WorkspaceError('replace needs "path", "old" and "new"')
+        old, new = self.masker.unmask(old), self.masker.unmask(new)
         text = self.current(rel)
         if text is None:
             raise WorkspaceError(f"{rel} does not exist; use write_file to create it")
@@ -185,6 +189,7 @@ class Toolbox:
         content = call.get("content")
         if not rel or not isinstance(content, str):
             raise WorkspaceError('write_file needs "path" and "content"')
+        content = self.masker.unmask(content)
         full = self.ws.resolve(rel)
         self.ws.check_readable(full)
         if full.is_dir():
