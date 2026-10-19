@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>YOUSEF AI</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#input">انتقل إلى خانة الطلب</a>
+
+  <header class="bar">
+    <div class="mark" aria-label="YOUSEF AI">
+      <span class="mark-ar" aria-hidden="true">يوسف</span>
+      <span class="mark-en">YOUSEF AI</span>
+    </div>
+    <div class="engines" id="engines" aria-live="polite">
+      <span class="engine" id="engine-local"><span class="dot"></span><span class="label">يتحقق من Ollama…</span></span>
+      <span class="engine" id="engine-cloud"><span class="dot"></span><span class="label"></span></span>
+    </div>
+    <nav class="bar-actions">
+      <button type="button" class="ghost" id="btn-new">محادثة جديدة</button>
+      <button type="button" class="ghost" id="btn-settings" aria-controls="drawer" aria-expanded="false">الإعدادات</button>
+    </nav>
+  </header>
+
+  <main id="feed" class="feed">
+    <section id="empty" class="empty" hidden>
+      <h1 class="greet">ماذا نُنجز اليوم؟</h1>
+      <p class="lede">اكتب طلبك، وسيقسّمه يوسف إلى خطوات ويوزّعها على وكلائه: المساعد العام، والمبرمج، وصانع المحتوى، والمحلل.</p>
+      <div id="setup-note" class="notice" hidden>
+        <p>لا يوجد نموذج جاهز بعد. شغّل Ollama وثبّت نموذجًا، أو أضف مفتاح API واختر نموذجًا.</p>
+        <button type="button" class="ghost" data-open-settings>افتح الإعدادات</button>
+      </div>
+      <div class="examples">
+        <button type="button" class="example">اكتب ثلاثة منشورات إنستغرام لإطلاق منتج جديد في متجري، بلهجة قريبة من الجمهور العُماني</button>
+        <button type="button" class="example">حلّل نقاط القوة والضعف لمتجر منافس يبيع العطور والبخور، ثم اقترح خطة تسويق لشهر</button>
+        <button type="button" class="example">اكتب دالة بايثون تقرأ ملف CSV للمبيعات وتعطيني أعلى خمسة منتجات ربحًا</button>
+      </div>
+    </section>
+    <div id="tasks"></div>
+  </main>
+
+  <form id="composer" class="composer" autocomplete="off">
+    <label class="sr" for="input">اكتب طلبك</label>
+    <div class="composer-box">
+      <textarea id="input" rows="1" maxlength="8000" placeholder="اطلب منشورًا، تحليلًا، كودًا، خطة…"></textarea>
+      <button type="submit" id="send" class="primary">أرسل</button>
+    </div>
+    <p class="hint" id="composer-hint">للإرسال اضغط Enter، ولسطر جديد Shift+Enter.</p>
+  </form>
+
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="drawer" class="drawer" hidden aria-labelledby="drawer-title" role="dialog" aria-modal="true">
+    <div class="drawer-head">
+      <h2 id="drawer-title">الإعدادات</h2>
+      <button type="button" class="ghost" id="btn-close">إغلاق</button>
+    </div>
+
+    <section class="panel">
+      <h3>النموذج المحلي (Ollama)</h3>
+      <p class="panel-note" id="ollama-note"></p>
+      <label for="ollama-url">عنوان Ollama</label>
+      <input id="ollama-url" type="url" dir="ltr" spellcheck="false">
+      <label for="local-model">النموذج المحلي</label>
+      <div class="row">
+        <select id="local-model"></select>
+        <button type="button" class="ghost" id="btn-refresh-local">حدّث القائمة</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>النماذج السحابية</h3>
+      <p class="panel-note" id="keys-note"></p>
+      <div id="providers"></div>
+    </section>
+
+    <section class="panel">
+      <h3>توجيه المهام</h3>
+      <label for="mode">طريقة العمل</label>
+      <select id="mode">
+        <option value="auto">تلقائي: حسب نوع المهمة</option>
+        <option value="local_only">محلي فقط: لا شيء يخرج من جهازك</option>
+        <option value="cloud_first">السحابة أولًا لكل المهام</option>
+      </select>
+      <div id="routing" class="routing"></div>
+      <button type="button" class="primary" id="btn-save-settings">احفظ الإعدادات</button>
+      <p class="status-line" id="settings-status" role="status"></p>
+    </section>
+
+    <section class="panel">
+      <h3>ما تعلّمه يوسف</h3>
+      <p class="panel-note">القواعد تُعطى لكل الوكلاء في كل طلب. التقييمات تُستعمل في الطلبات المشابهة.</p>
+      <label for="rule-input">قاعدة جديدة</label>
+      <textarea id="rule-input" rows="2" placeholder="مثال: اكتب منشورات المتجر بلهجة عُمانية وأضف السعر بالريال العُماني"></textarea>
+      <button type="button" class="ghost" id="btn-add-rule">أضف القاعدة</button>
+      <ul id="lessons" class="lessons"></ul>
+    </section>
+
+    <section class="panel">
+      <h3>الوكلاء</h3>
+      <ul id="agents" class="agents"></ul>
+    </section>
+
+    <section class="panel about">
+      <p id="about"></p>
+    </section>
+  </aside>
+</body>
+</html>

@@ -1,0 +1,95 @@
+"""Agent registry.
+
+An agent is a role: a system prompt plus the kind of task it does, which tells
+the router which model to use. Phase 1 agents think and write; they gain real
+tools (GitHub, Shopify, Meta, ...) as connectors are added in later phases.
+Planned agents are listed so the dashboard can show the roadmap, but the
+planner never assigns work to them until they are available.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+
+BASE_RULES = """You are part of YOUSEF AI, a personal assistant running on the user's own Windows PC.
+- Reply in the language the user writes in (Arabic by default; keep code, commands and technical names as they are).
+- Be direct and practical. Use short headings, lists or tables when they make the answer easier to use.
+- In this version you have no tools: you cannot publish, send messages, buy, delete, trade, browse the web, read the user's files or control the computer.
+  When a task needs one of those, prepare everything needed (the text, the plan, the code, the exact steps) and say plainly that execution becomes possible once the matching connector is added.
+- Never claim you performed an action. Never invent live data, prices, statistics, quotes or search results; say what would need checking.
+- Respect the user's saved rules below. They come from the user and override your defaults."""
+
+
+@dataclass(frozen=True)
+class Agent:
+    key: str
+    name: str
+    role: str  # one line, shown to the planner and the dashboard
+    task_type: str
+    prompt: str = ""
+    available: bool = True
+    phase: int = 1
+
+    def system_prompt(self, rules: list[str]) -> str:
+        text = BASE_RULES + "\n\nYour role: " + self.prompt
+        if rules:
+            text += "\n\nUser's saved rules:\n" + "\n".join(f"- {r}" for r in rules)
+        return text
+
+    def public(self) -> dict:
+        d = asdict(self)
+        d.pop("prompt")
+        return d
+
+
+AGENTS: dict[str, Agent] = {
+    a.key: a
+    for a in [
+        Agent(
+            "general", "المساعد العام",
+            "Answers questions, explains, summarizes, gives advice and handles anything that fits no other agent.",
+            "chat",
+            "General assistant. Answer clearly, give concrete next steps, keep it as short as the question allows.",
+        ),
+        Agent(
+            "coder", "المبرمج",
+            "Writes, reviews and fixes code; explains errors; plans site and app structure.",
+            "code",
+            "Programmer. Write complete, runnable code with file names and short run instructions. "
+            "When fixing, show the cause first, then the corrected code. Prefer simple, secure solutions.",
+        ),
+        Agent(
+            "writer", "صانع المحتوى",
+            "Writes social posts, ad copy, product descriptions, video scripts and image prompts.",
+            "writing",
+            "Content creator. Fit the tone and length to each platform (Instagram, X, TikTok, LinkedIn, store pages). "
+            "Offer 2-3 variants when useful, with hashtags and a call to action where it fits.",
+        ),
+        Agent(
+            "analyst", "المحلل",
+            "Compares customers, competitors, products and markets; turns information into decisions.",
+            "analysis",
+            "Analyst. Structure the analysis (tables, pros/cons, priorities) and end with clear recommendations. "
+            "Separate what is known from assumptions, and list what data would make the analysis stronger.",
+        ),
+        Agent("store_manager", "مدير المتاجر", "Manages Shopify and WooCommerce products and orders.",
+              "analysis", available=False, phase=4),
+        Agent("ads_manager", "مدير الإعلانات", "Plans and manages ad campaigns.",
+              "analysis", available=False, phase=5),
+        Agent("social_publisher", "ناشر السوشيال", "Publishes and schedules posts on social platforms.",
+              "writing", available=False, phase=5),
+        Agent("trading_analyst", "محلل التداول", "Market analysis, alerts and paper trading.",
+              "analysis", available=False, phase=6),
+        Agent("device_control", "التحكم بالجهاز", "Controls apps and files on this PC.",
+              "chat", available=False, phase=6),
+    ]
+}
+
+
+def available_agents() -> list[Agent]:
+    return [a for a in AGENTS.values() if a.available]
+
+
+def get_agent(key: str) -> Agent:
+    agent = AGENTS.get(key)
+    return agent if agent and agent.available else AGENTS["general"]
