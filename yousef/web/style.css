@@ -288,6 +288,9 @@ button { cursor: pointer; }
 .presult { margin: 8px 0 0; font-size: 13px; }
 .presult a { color: var(--door); }
 .add-store { margin-top: 12px; }
+.steps-note { padding-inline-start: 20px; margin: 8px 0; }
+.steps-note li { margin-bottom: 4px; overflow-wrap: anywhere; }
+.steps-note code { font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; display: inline-block; margin: 1px 0; }
 .add-store > summary { cursor: pointer; color: var(--door); width: fit-content; }
 .row-actions { display: flex; gap: 12px; flex: none; }
 

@@ -23,6 +23,7 @@ from .config import KEY_NAMES
 
 _ENTROPY = b"YousefAI-keystore-v1"
 STORE_KEY = re.compile(r"store:[0-9a-f]{8}")  # one secret per connected store
+SOCIAL_KEY = re.compile(r"social:\d{1,30}")  # one Page token per connected Facebook Page
 
 
 class KeyStoreError(ValueError):
@@ -111,7 +112,7 @@ def validate_key(key: str) -> str:
     if not isinstance(key, str):
         raise KeyStoreError("key must be text")
     key = key.strip()
-    if len(key) < 8 or len(key) > 512:
+    if len(key) < 8 or len(key) > 2048:  # Meta tokens can be several hundred characters
         raise KeyStoreError("key length looks wrong")
     if any(ch.isspace() for ch in key):
         raise KeyStoreError("key must not contain spaces or line breaks")
@@ -145,7 +146,8 @@ class KeyStore:
 
     @staticmethod
     def _check_provider(provider: str) -> None:
-        if provider not in KEY_NAMES and not STORE_KEY.fullmatch(provider or ""):
+        if provider not in KEY_NAMES and not STORE_KEY.fullmatch(provider or "") \
+                and not SOCIAL_KEY.fullmatch(provider or ""):
             raise KeyStoreError(f"unknown provider: {provider}")
 
     def set(self, provider: str, key: str) -> None:

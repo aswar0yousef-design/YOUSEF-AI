@@ -48,6 +48,8 @@ DEFAULT_SETTINGS: dict = {
     "workspaces": [],
     # connected online stores: [{"id", "name", "platform", "url", "api_version"}]; secrets live in keys.dat
     "stores": [],
+    # Facebook Pages (with their Instagram accounts): [{"id", "name", "ig_id", "ig_username"}]; tokens live in keys.dat
+    "social": [],
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "small",
@@ -124,6 +126,7 @@ def _validate(merged: dict) -> dict:
         raise SettingsError("ollama_ctx must be between 2048 and 131072")
     s["workspaces"] = _validate_workspaces(s.get("workspaces"))
     s["stores"] = _validate_stores(s.get("stores"))
+    s["social"] = _validate_social(s.get("social"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
 
 
@@ -148,6 +151,25 @@ def _validate_stores(items) -> list:
             raise SettingsError("invalid store entry")
         ids.add(sid)
         out.append({"id": sid, "name": name, "platform": platform, "url": url, "api_version": version})
+    return out
+
+
+def _validate_social(items) -> list:
+    if not isinstance(items, list) or len(items) > 20:
+        raise SettingsError("social must be a list of at most 20 pages")
+    out, ids = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise SettingsError("each social account needs an id and a name")
+        pid = str(item.get("id") or "")
+        name = str(item.get("name") or "").strip()
+        ig_id = str(item.get("ig_id") or "")
+        ig_user = str(item.get("ig_username") or "").strip()
+        if (not pid.isdigit() or len(pid) > 30 or pid in ids or not 1 <= len(name) <= 100
+                or (ig_id and (not ig_id.isdigit() or len(ig_id) > 30)) or len(ig_user) > 60):
+            raise SettingsError("invalid social account entry")
+        ids.add(pid)
+        out.append({"id": pid, "name": name, "ig_id": ig_id, "ig_username": ig_user})
     return out
 
 

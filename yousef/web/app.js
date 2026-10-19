@@ -51,7 +51,7 @@ const ACTIVE = new Set(["planning", "running", "waiting"]);
 const $ = (sel, root = document) => root.querySelector(sel);
 const state = {
   tasks: new Map(), open: new Set(), status: null, settings: null, keys: null, agents: [], pollTimer: null, workspaces: [],
-  stores: [], unticked: new Set(),
+  stores: [], unticked: new Set(), social: [],
 };
 
 const store = {
@@ -869,6 +869,37 @@ function renderStores() {
   fillStorePicker();
 }
 
+function renderSocial() {
+  const ul = $("#social-list");
+  ul.replaceChildren();
+  if (!state.social.length) {
+    const li = document.createElement("li");
+    li.textContent = "لا توجد حسابات بعد. اربط صفحتك ليعمل عليها ناشر السوشيال.";
+    ul.appendChild(li);
+  }
+  for (const a of state.social) {
+    const li = document.createElement("li");
+    li.className = "ws-item";
+    const ig = a.ig_username ? `<span class="chip">إنستغرام <bdi dir="ltr">@${esc(a.ig_username)}</bdi></span>` : `<span class="muted">بدون إنستغرام</span>`;
+    li.innerHTML = `<div class="ws-head"><p><strong>${esc(a.name)}</strong> <span class="chip">فيسبوك</span> ${ig}`
+      + `${a.connected ? "" : " <em>(الرمز غير محفوظ على هذا الجهاز)</em>"}</p>`
+      + `<span class="row-actions"><button type="button" class="link" data-social-act="test" data-social="${esc(a.id)}">اختبر</button>`
+      + `<button type="button" class="link" data-social-act="posts" data-social="${esc(a.id)}">آخر المنشورات</button>`
+      + `<button type="button" class="link" data-social-act="remove" data-social="${esc(a.id)}">أزل</button></span></div>`
+      + `<p class="status-line" role="status"></p>`;
+    ul.appendChild(li);
+  }
+}
+
+async function loadSocial() {
+  try {
+    state.social = (await api("GET", "/api/social")).accounts;
+  } catch (e) {
+    state.social = [];
+  }
+  renderSocial();
+}
+
 async function loadStores() {
   try {
     state.stores = (await api("GET", "/api/stores")).stores;
@@ -927,12 +958,12 @@ function renderLessons(lessons) {
   }
 }
 
-const NEED_LABEL = { stores: "متجر متصل", workspace: "مجلد مشروع" };
+const NEED_LABEL = { stores: "متجر متصل", workspace: "مجلد مشروع", social: "حساب سوشيال مربوط" };
 
 function agentState(a) {
   if (!a.available) return [false, `في المرحلة ${a.phase}`];
   const needs = a.needs || [];
-  const have = { stores: state.stores.length > 0, workspace: state.workspaces.length > 0 };
+  const have = { stores: state.stores.length > 0, workspace: state.workspaces.length > 0, social: state.social.length > 0 };
   if (!needs.length || needs.some((n) => have[n])) return [true, "يعمل الآن"];
   return [false, `يحتاج ${needs.map((n) => NEED_LABEL[n] || n).join(" أو ")}`];
 }
@@ -964,6 +995,7 @@ async function openDrawer() {
     renderLessons(lessons);
     await loadWorkspaces();
     await loadStores();
+    await loadSocial();
     renderAgents();
     renderStoreForm();
     $("#ws-status").textContent = "";
@@ -1079,6 +1111,56 @@ document.addEventListener("DOMContentLoaded", async () => {
       line.classList.add("is-error");
     } finally {
       btn.disabled = false;
+    }
+  });
+  $("#btn-social-connect").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const line = $("#social-status");
+    line.classList.remove("is-error");
+    btn.disabled = true;
+    line.textContent = "يتصل بـ Meta ويجلب صفحاتك…";
+    try {
+      const data = await api("POST", "/api/social", { token: $("#social-token").value });
+      $("#social-token").value = "";
+      state.social = data.accounts;
+      renderSocial();
+      renderAgents();
+      const names = data.added.map((a) => a.name + (a.ig_username ? ` (+ إنستغرام @${a.ig_username})` : "")).join("، ");
+      line.textContent = `رُبطت: ${names}.`;
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $("#social-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-social-act]");
+    if (!btn) return;
+    const id = btn.dataset.social;
+    const line = btn.closest("li").querySelector(".status-line");
+    line.classList.remove("is-error");
+    try {
+      if (btn.dataset.socialAct === "test") {
+        line.textContent = "يختبر…";
+        const { info } = await api("POST", `/api/social/${id}/test`, {});
+        const ig = info.instagram ? `، وإنستغرام @${info.instagram.username}: ${info.instagram.followers ?? "؟"} متابع` : "";
+        line.textContent = `يعمل: ${info.name}، ${info.followers ?? "؟"} متابع${ig}.`;
+      } else if (btn.dataset.socialAct === "posts") {
+        line.textContent = "يقرأ المنشورات…";
+        const data = await api("GET", `/api/social/${id}/posts`);
+        const first = (list) => (list[0] ? `«${list[0].text.slice(0, 60) || "بلا نص"}»` : "لا شيء");
+        line.textContent = `آخر منشور في فيسبوك: ${first(data.facebook)}. في إنستغرام: ${first(data.instagram)}. مجدول في فيسبوك: ${data.scheduled.length}.`;
+      } else {
+        const name = (state.social.find((a) => a.id === id) || {}).name || "";
+        if (!confirm(`إزالة «${name}» ورمزه من هذا الجهاز؟ لا تتأثر الصفحة نفسها.`)) return;
+        state.social = (await api("DELETE", `/api/social/${id}`)).accounts;
+        renderSocial();
+        renderAgents();
+      }
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
     }
   });
   $("#store-list").addEventListener("click", async (e) => {
@@ -1201,6 +1283,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadStatus();
   await loadWorkspaces();
   await loadStores();
+  await loadSocial();
   try { await loadTasks(); } catch (e) { els.empty.hidden = false; showHint(e.message, true); }
   setInterval(() => loadStatus(), 30000);
   els.input.focus();

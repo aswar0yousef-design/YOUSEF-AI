@@ -158,6 +158,25 @@
       </details>
     </section>
 
+    <section class="panel" id="social-panel">
+      <h3>حسابات السوشيال</h3>
+      <p class="panel-note">صفحات فيسبوك وحسابات إنستغرام التجارية المرتبطة بها. ناشر السوشيال يكتب المنشورات ويقترحها، ولا يُنشر شيء إلا بموافقتك.</p>
+      <ul id="social-list" class="lessons"></ul>
+      <details class="add-store" id="social-connect">
+        <summary>اربط صفحاتك</summary>
+        <ol class="panel-note steps-note">
+          <li>من <bdi dir="ltr">developers.facebook.com</bdi> أنشئ تطبيقًا خاصًا بك (يكفي وضع التطوير لصفحاتك).</li>
+          <li>من Graph API Explorer اختر التطبيق، ثم «User Token»، وفعّل: <code dir="ltr">pages_show_list</code> <code dir="ltr">pages_read_engagement</code> <code dir="ltr">pages_manage_posts</code> <code dir="ltr">instagram_basic</code> <code dir="ltr">instagram_content_publish</code> <code dir="ltr">business_management</code>، ثم «Generate Access Token».</li>
+          <li>افتح الرمز في Access Token Debugger واضغط «Extend Access Token»، وانسخ الرمز الطويل.</li>
+        </ol>
+        <label for="social-token">رمز Meta</label>
+        <input id="social-token" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="EAA...">
+        <p class="panel-note">يجلب يوسف صفحاتك ورمز كل صفحة، ويحفظها مشفّرة على جهازك. حساب إنستغرام يجب أن يكون تجاريًا أو حساب صانع محتوى ومرتبطًا بالصفحة.</p>
+        <button type="button" class="primary" id="btn-social-connect">اربط واحفظ</button>
+        <p class="status-line" id="social-status" role="status"></p>
+      </details>
+    </section>
+
     <section class="panel" id="services-panel">
       <h3>GitHub وVercel</h3>
       <div id="services"></div>

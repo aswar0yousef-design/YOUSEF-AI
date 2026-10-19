@@ -252,6 +252,11 @@ class Api:
             ("POST", r"/api/stores/([0-9a-f]{8})/test", self.test_store),
             ("GET", r"/api/stores/([0-9a-f]{8})/summary", self.store_summary),
             ("DELETE", r"/api/stores/([0-9a-f]{8})", self.remove_store),
+            ("GET", r"/api/social", self.list_social),
+            ("POST", r"/api/social", self.connect_social),
+            ("POST", r"/api/social/(\d{1,30})/test", self.test_social),
+            ("GET", r"/api/social/(\d{1,30})/posts", self.social_posts),
+            ("DELETE", r"/api/social/(\d{1,30})", self.remove_social),
             ("GET", r"/api/voice/status", self.voice_status),
             ("POST", r"/api/voice/load", self.voice_load),
             ("POST", r"/api/voice/transcribe", self.voice_transcribe),
@@ -505,3 +510,39 @@ class Api:
         if not self.app.stores.remove(store_id):
             raise ApiError(404, "store not found")
         return 200, {"stores": self.app.stores.public()}
+
+    # ---- social accounts ---------------------------------------------------------
+    def list_social(self, query, body):
+        return 200, {"accounts": self.app.social.public()}
+
+    def connect_social(self, query, body):
+        token = str(body.get("token", "")).strip()
+        if not token:
+            raise ApiError(400, "الصق رمز Meta أولًا")
+        try:
+            added = self.app.social.connect(token)
+        except (ProviderError, KeyStoreError, SettingsError) as e:
+            raise ApiError(400, str(e)) from None
+        return 201, {"added": added, "accounts": self.app.social.public()}
+
+    def test_social(self, page_id, query, body):
+        try:
+            return 200, {"info": self.app.social.test(page_id)}
+        except ProviderError as e:
+            raise ApiError(502, str(e)) from None
+
+    def social_posts(self, page_id, query, body):
+        entry = self.app.social.find(page_id)
+        if not entry:
+            raise ApiError(404, "account not found")
+        try:
+            page = self.app.social.page(entry)
+            return 200, {"facebook": page.facebook_posts(5), "instagram": page.instagram_posts(5),
+                         "scheduled": page.facebook_scheduled()}
+        except ProviderError as e:
+            raise ApiError(502, str(e)) from None
+
+    def remove_social(self, page_id, query, body):
+        if not self.app.social.remove(page_id):
+            raise ApiError(404, "account not found")
+        return 200, {"accounts": self.app.social.public()}

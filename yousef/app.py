@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import Settings, data_dir as default_data_dir
 from .core import Orchestrator
 from .integrations import Stores
+from .integrations.social import SocialAccounts
 from .integrations.stores import make_client
 from .keystore import KeyStore
 from .memory import Memory
@@ -26,6 +27,7 @@ class App:
     orchestrator: Orchestrator
     voice: VoiceEngine
     stores: Stores
+    social: SocialAccounts
 
     def close(self) -> None:
         self.orchestrator.shutdown()
@@ -33,7 +35,7 @@ class App:
 
 
 def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_backend=None,
-              store_factory=None) -> App:
+              store_factory=None, meta_api: str | None = None, meta_sleep=None) -> App:
     root = Path(data_dir) if data_dir else default_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     settings = Settings(root / "settings.json")
@@ -42,6 +44,7 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     memory.mark_interrupted()
     router = Router(settings, keystore, factory or default_factory)
     stores = Stores(settings, keystore, store_factory or make_client)
+    social = SocialAccounts(settings, keystore, **({"api": meta_api} if meta_api else {}), sleep=meta_sleep)
     orchestrator = Orchestrator(memory, router, settings, keystore, stores)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
-    return App(root, settings, keystore, memory, router, orchestrator, voice, stores)
+    return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social)
