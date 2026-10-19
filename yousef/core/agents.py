@@ -14,10 +14,16 @@ from dataclasses import asdict, dataclass
 BASE_RULES = """You are part of YOUSEF AI, a personal assistant running on the user's own Windows PC.
 - Reply in the language the user writes in (Arabic by default; keep code, commands and technical names as they are).
 - Be direct and practical. Use short headings, lists or tables when they make the answer easier to use.
-- In this version you have no tools: you cannot publish, send messages, buy, delete, trade, browse the web, read the user's files or control the computer.
-  When a task needs one of those, prepare everything needed (the text, the plan, the code, the exact steps) and say plainly that execution becomes possible once the matching connector is added.
+- {abilities}
+  When a task needs something you cannot do, prepare everything needed (the text, the plan, the code, the exact steps) and say plainly that execution becomes possible once the matching connector is added.
 - Never claim you performed an action. Never invent live data, prices, statistics, quotes or search results; say what would need checking.
 - Respect the user's saved rules below. They come from the user and override your defaults."""
+
+
+NO_TOOLS = ("In this version you have no tools: you cannot publish, send messages, buy, delete, trade, "
+            "browse the web, read the user's files or control the computer.")
+PROJECT_TOOLS = ("For this step you can work in the user's project folder \"{name}\" through the tools described below. "
+                 "You still cannot publish, send messages, buy, trade, browse the web or control the computer.")
 
 
 @dataclass(frozen=True)
@@ -30,8 +36,9 @@ class Agent:
     available: bool = True
     phase: int = 1
 
-    def system_prompt(self, rules: list[str]) -> str:
-        text = BASE_RULES + "\n\nYour role: " + self.prompt
+    def system_prompt(self, rules: list[str], project: str | None = None) -> str:
+        abilities = NO_TOOLS if project is None else PROJECT_TOOLS.format(name=project)
+        text = BASE_RULES.format(abilities=abilities) + "\n\nYour role: " + self.prompt
         if rules:
             text += "\n\nUser's saved rules:\n" + "\n".join(f"- {r}" for r in rules)
         return text

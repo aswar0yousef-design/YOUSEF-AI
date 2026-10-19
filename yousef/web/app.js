@@ -16,10 +16,26 @@ const STEP_STATE = {
   done: "تم", failed: "تعثّر", skipped: "تُخطّيت",
 };
 const LESSON_KIND = { rule: "قاعدة", success: "أفادت", failure: "لم تُفد" };
+const TOOL_LABEL = {
+  list_files: "عرض مجلد", read_file: "قراءة", search: "بحث", replace: "تعديل مقترح", write_file: "ملف مقترح",
+  git_status: "حالة git", git_diff: "فروقات git", run: "تشغيل أمر", vercel_status: "حالة Vercel",
+};
+const CHANGE_STATUS = { pending: "بانتظار موافقتك", applied: "طُبّق", rejected: "مرفوض", conflict: "تعارض", error: "خطأ" };
 const ACTIVE = new Set(["planning", "running", "waiting"]);
 
 const $ = (sel, root = document) => root.querySelector(sel);
-const state = { tasks: new Map(), open: new Set(), status: null, settings: null, keys: null, agents: [], pollTimer: null };
+const state = {
+  tasks: new Map(), open: new Set(), status: null, settings: null, keys: null, agents: [], pollTimer: null, workspaces: [],
+};
+
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(`yousef.${key}`); return v === null ? fallback : JSON.parse(v); } catch (e) { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(`yousef.${key}`, JSON.stringify(value)); } catch (e) { /* storage blocked */ }
+  },
+};
 
 const els = {};
 
@@ -173,16 +189,64 @@ function stepHTML(step, task, hideOutput) {
   if (step.instruction.trim() !== task.request.trim()) {
     h += `<p class="instr" dir="auto">${esc(step.instruction)}</p>`;
   }
-  if (step.status === "awaiting_approval") {
+  const trace = step.trace || [];
+  if (trace.length) {
+    h += `<details class="trace"><summary>ما فعله ${esc(agentName(step.agent))}: ${trace.length} ${trace.length > 10 ? "أداة" : "أدوات"}</summary><ul>`
+      + trace.map((t) => `<li class="${t.ok ? "" : "bad"}"><span>${esc(TOOL_LABEL[t.tool] || t.tool)}</span> <bdi dir="ltr">${esc(t.target || "")}</bdi>${t.ok ? "" : ` <em>${esc(t.note || "تعذّر")}</em>`}</li>`).join("")
+      + "</ul></details>";
+  }
+  const changes = step.changes || [];
+  const pendingChanges = changes.filter((c) => c.status === "pending").length;
+  if (pendingChanges && step.output) {
+    // the agent's explanation comes before the diffs it proposes
+    h += `<div class="md explain">${md(step.output)}</div>`;
+  }
+  if (changes.length) h += changesHTML(changes);
+  if (step.status === "awaiting_approval" && pendingChanges) {
+    h += `<div class="gate"><p>يقترح ${esc(agentName(step.agent))} تعديل ${countFiles(pendingChanges)}. راجع الفروقات، ثم قرّر. لن يُكتب شيء قبل موافقتك.</p>`
+      + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">طبّق التعديلات</button>`
+      + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفضها</button></div>`;
+  } else if (step.status === "awaiting_approval") {
     h += `<div class="gate"><p>هذه الخطوة فيها إجراء خارج المحادثة (نشر، إرسال، دفع، حذف…)، لذلك تنتظر موافقتك.</p>`
       + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">وافق ونفّذ</button>`
       + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفض الخطوة</button></div>`;
   }
-  if (step.output && !hideOutput) {
+  if (step.output && !hideOutput && !pendingChanges) {
     const open = state.open.has(String(step.id)) ? " open" : "";
     h += `<details class="out" data-step="${step.id}"${open}><summary>نتيجة هذه الخطوة</summary><div class="md">${md(step.output)}</div></details>`;
   }
   return h + "</li>";
+}
+
+function diffHTML(diff) {
+  return diff.split("\n").map((line) => {
+    let cls = "ctx";
+    if (line.startsWith("+++") || line.startsWith("---")) cls = "meta";
+    else if (line.startsWith("@@")) cls = "hunk";
+    else if (line.startsWith("+")) cls = "add";
+    else if (line.startsWith("-")) cls = "del";
+    return `<span class="${cls}">${esc(line) || " "}</span>`;
+  }).join("");
+}
+
+function countFiles(n) {
+  if (n === 1) return "ملف واحد";
+  if (n === 2) return "ملفين";
+  return n <= 10 ? `${n} ملفات` : `${n} ملفًا`;
+}
+
+function changesHTML(changes) {
+  // pending diffs start open when they are short enough to read in place
+  const lines = changes.reduce((n, c) => n + (c.added || 0) + (c.removed || 0), 0);
+  return `<div class="changes">${changes.map((c) => {
+    const open = state.open.has(`c${c.id}`) || (c.status === "pending" && lines <= 300) ? " open" : "";
+    return `<details class="change" data-change="${c.id}"${open}><summary>`
+      + `<bdi dir="ltr" class="path">${esc(c.path)}</bdi>${c.new_file ? ` <span class="new">ملف جديد</span>` : ""}`
+      + ` <bdi dir="ltr" class="counts"><span class="plus">+${c.added}</span> <span class="minus">−${c.removed}</span></bdi>`
+      + ` <span class="cstatus is-${esc(c.status)}">${CHANGE_STATUS[c.status] || c.status}</span>`
+      + `${c.note ? ` <span class="cnote">${esc(c.note)}</span>` : ""}</summary>`
+      + `<pre class="diff" dir="ltr">${diffHTML(c.diff || "")}</pre></details>`;
+  }).join("")}</div>`;
 }
 
 function footHTML(t) {
@@ -209,6 +273,11 @@ function taskHTML(t) {
   const steps = t.steps || [];
   const singleDone = steps.length === 1 && t.status === "done";
   let h = `<h2 class="ask" dir="auto">${esc(t.request)}</h2>`;
+  const ctx = t.context || {};
+  const meta = [];
+  if (t.workspace) meta.push(`المشروع <bdi>${esc(t.workspace)}</bdi>`);
+  if (ctx.file) meta.push(`الملف <bdi dir="ltr">${esc(ctx.file)}</bdi>${ctx.start_line ? ` (الأسطر ${ctx.start_line}–${ctx.end_line})` : ""}`);
+  if (meta.length) h += `<p class="task-meta">${meta.join("، ")}</p>`;
   if (TASK_STATE[t.status]) {
     h += `<p class="task-state${t.status === "waiting" ? " is-waiting" : ""}" role="status">${TASK_STATE[t.status]}</p>`;
   }
@@ -228,10 +297,14 @@ function renderTask(task) {
     els.tasks.appendChild(el);
   }
   const sig = JSON.stringify([task.status, task.final, task.error, task.feedback,
-    (task.steps || []).map((s) => [s.status, s.output, s.model])]);
+    (task.steps || []).map((s) => [s.status, s.output, s.model, (s.trace || []).length,
+      (s.changes || []).map((c) => c.status)])]);
   if (el.dataset.sig === sig) return el;
   el.querySelectorAll("details[data-step]").forEach((d) => {
     if (d.open) state.open.add(d.dataset.step); else state.open.delete(d.dataset.step);
+  });
+  el.querySelectorAll("details[data-change]").forEach((d) => {
+    if (d.open) state.open.add(`c${d.dataset.change}`); else state.open.delete(`c${d.dataset.change}`);
   });
   el.dataset.sig = sig;
   el.innerHTML = taskHTML(task);
@@ -272,7 +345,8 @@ async function submit(text, source = "text") {
   if (!text) { showHint("اكتب طلبك أولًا.", true); els.input.focus(); return null; }
   els.send.disabled = true;
   try {
-    const { task } = await api("POST", "/api/tasks", { request: text, source });
+    const workspace = $("#workspace").value || null;
+    const { task } = await api("POST", "/api/tasks", { request: text, source, workspace });
     if (source === "text") {
       els.input.value = "";
       autosize();
@@ -533,6 +607,41 @@ async function saveSettings() {
   }
 }
 
+function fillWorkspacePicker() {
+  const sel = $("#workspace");
+  const saved = store.get("workspace", "");
+  sel.replaceChildren(option("", "بدون مشروع", false));
+  state.workspaces.forEach((w) => sel.appendChild(option(w.name, w.name, w.name === saved)));
+  if (!state.workspaces.some((w) => w.name === saved)) sel.value = "";
+  $("#ws-pick").hidden = state.workspaces.length === 0;
+}
+
+function renderWorkspaces() {
+  const ul = $("#ws-list");
+  ul.replaceChildren();
+  if (!state.workspaces.length) {
+    const li = document.createElement("li");
+    li.textContent = "لا توجد مجلدات بعد. أضف مجلد مشروعك ليعمل عليه المبرمج.";
+    ul.appendChild(li);
+  }
+  for (const w of state.workspaces) {
+    const li = document.createElement("li");
+    li.innerHTML = `<p><strong>${esc(w.name)}</strong><br><bdi dir="ltr" class="muted">${esc(w.path)}</bdi>${w.exists ? "" : " <em>(المجلد غير موجود)</em>"}</p>`
+      + `<button type="button" class="link" data-ws="${esc(w.name)}">أزل</button>`;
+    ul.appendChild(li);
+  }
+  fillWorkspacePicker();
+}
+
+async function loadWorkspaces() {
+  try {
+    state.workspaces = (await api("GET", "/api/workspaces")).workspaces;
+  } catch (e) {
+    state.workspaces = [];
+  }
+  renderWorkspaces();
+}
+
 function renderLessons(lessons) {
   const ul = $("#lessons");
   ul.replaceChildren();
@@ -574,6 +683,8 @@ async function openDrawer() {
     renderRouting();
     renderLessons(lessons);
     renderAgents();
+    await loadWorkspaces();
+    $("#ws-status").textContent = "";
     $("#settings-status").textContent = "";
     $("#about").textContent = `الإصدار ${state.status.version}. بياناتك محفوظة على هذا الجهاز في: ${state.status.data_dir}`;
     for (const hook of window.Yousef.drawerHooks) {
@@ -650,6 +761,30 @@ document.addEventListener("DOMContentLoaded", async () => {
       $("#ollama-note").textContent = err.message;
     }
   });
+  $("#workspace").addEventListener("change", (e) => store.set("workspace", e.target.value));
+  $("#btn-add-ws").addEventListener("click", async () => {
+    const input = $("#ws-path");
+    const line = $("#ws-status");
+    line.classList.remove("is-error");
+    try {
+      const data = await api("POST", "/api/workspaces", { path: input.value });
+      state.workspaces = data.workspaces;
+      renderWorkspaces();
+      input.value = "";
+      line.textContent = `أُضيف المجلد «${data.workspace.name}».`;
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    }
+  });
+  $("#ws-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-ws]");
+    if (!btn) return;
+    try {
+      state.workspaces = (await api("DELETE", `/api/workspaces/${encodeURIComponent(btn.dataset.ws)}`)).workspaces;
+      renderWorkspaces();
+    } catch (err) { showHint(err.message, true); }
+  });
   $("#btn-add-rule").addEventListener("click", async () => {
     const box = $("#rule-input");
     if (!box.value.trim()) { box.focus(); return; }
@@ -678,6 +813,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     state.agents = (await api("GET", "/api/agents")).agents;
   } catch (e) { /* names fall back to keys */ }
   await loadStatus();
+  await loadWorkspaces();
   try { await loadTasks(); } catch (e) { els.empty.hidden = false; showHint(e.message, true); }
   setInterval(() => loadStatus(), 30000);
   els.input.focus();

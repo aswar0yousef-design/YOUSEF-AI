@@ -10,6 +10,7 @@ how YOUSEF AI learns: from remembered outcomes, not from retraining the model.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
@@ -58,6 +59,21 @@ CREATE TABLE IF NOT EXISTS lessons(
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS changes(
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL,
+    step_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    old_text TEXT,
+    new_text TEXT NOT NULL,
+    diff TEXT NOT NULL,
+    added INTEGER NOT NULL DEFAULT 0,
+    removed INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    note TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS changes_step ON changes(step_id);
 """
 
 ACTIVE_STATUSES = ("planning", "running", "waiting")
@@ -65,7 +81,8 @@ TASK_SOURCES = ("text", "voice")
 LESSON_KINDS = ("rule", "success", "failure")
 
 _TASK_FIELDS = {"status", "final", "error", "feedback"}
-_STEP_FIELDS = {"status", "output", "provider", "model", "error", "started_at", "finished_at"}
+_STEP_FIELDS = {"status", "output", "provider", "model", "error", "started_at", "finished_at", "trace"}
+CHANGE_STATUSES = ("pending", "applied", "rejected", "conflict", "error")
 
 _DIACRITICS = re.compile(r"[ً-ْـ]")
 _TOKEN = re.compile(r"\w{3,}")
@@ -106,20 +123,29 @@ class Memory:
         columns = {r["name"] for r in self._db.execute("PRAGMA table_info(tasks)").fetchall()}
         if "source" not in columns:  # added in 0.2.0: "text" or "voice"
             self._db.execute("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'text'")
+        if "workspace" not in columns:  # added in 0.3.0: project folder name
+            self._db.execute("ALTER TABLE tasks ADD COLUMN workspace TEXT")
+        if "context" not in columns:  # added in 0.3.0: editor context as JSON
+            self._db.execute("ALTER TABLE tasks ADD COLUMN context TEXT")
+        step_columns = {r["name"] for r in self._db.execute("PRAGMA table_info(steps)").fetchall()}
+        if "trace" not in step_columns:  # added in 0.3.0: tools the agent used, JSON
+            self._db.execute("ALTER TABLE steps ADD COLUMN trace TEXT")
 
     def close(self) -> None:
         with self._lock:
             self._db.close()
 
     # ---- tasks -------------------------------------------------------------
-    def create_task(self, request: str, source: str = "text") -> int:
+    def create_task(self, request: str, source: str = "text", workspace: str | None = None,
+                    context: dict | None = None) -> int:
         if source not in TASK_SOURCES:
             raise ValueError(f"source must be one of {TASK_SOURCES}")
         now = time.time()
         with self._lock:
             cur = self._db.execute(
-                "INSERT INTO tasks(request, status, source, created_at, updated_at) VALUES (?, 'planning', ?, ?, ?)",
-                (request, source, now, now),
+                "INSERT INTO tasks(request, status, source, workspace, context, created_at, updated_at) "
+                "VALUES (?, 'planning', ?, ?, ?, ?, ?)",
+                (request, source, workspace, json.dumps(context, ensure_ascii=False) if context else None, now, now),
             )
             self._db.commit()
             return int(cur.lastrowid)
@@ -144,14 +170,26 @@ class Memory:
             steps = self._db.execute(
                 "SELECT * FROM steps WHERE task_id = ? ORDER BY idx", (task_id,)
             ).fetchall()
+            changes = self._db.execute(
+                "SELECT id, step_id, path, old_text IS NULL AS new_file, diff, added, removed, status, note "
+                "FROM changes WHERE task_id = ? ORDER BY id", (task_id,)
+            ).fetchall()
         task = dict(row)
-        task["steps"] = [self._step_dict(s) for s in steps]
+        task["context"] = _loads(task.get("context"))
+        by_step: dict[int, list] = {}
+        for c in changes:
+            d = dict(c)
+            d["new_file"] = bool(d["new_file"])
+            by_step.setdefault(d.pop("step_id"), []).append(d)
+        task["steps"] = [self._step_dict(s, by_step.get(s["id"], [])) for s in steps]
         return task
 
     @staticmethod
-    def _step_dict(row) -> dict:
+    def _step_dict(row, changes: list | None = None) -> dict:
         d = dict(row)
         d["needs_confirmation"] = bool(d["needs_confirmation"])
+        d["trace"] = _loads(d.get("trace")) or []
+        d["changes"] = changes or []
         return d
 
     def list_tasks(self, limit: int = 50, since: float | None = None) -> list[dict]:
@@ -211,6 +249,44 @@ class Memory:
         with self._lock:
             row = self._db.execute("SELECT * FROM steps WHERE id = ?", (step_id,)).fetchone()
         return self._step_dict(row) if row else None
+
+    # ---- proposed file changes --------------------------------------------------
+    def add_changes(self, task_id: int, step_id: int, changes: list[dict]) -> list[int]:
+        ids = []
+        now = time.time()
+        with self._lock:
+            for c in changes:
+                cur = self._db.execute(
+                    "INSERT INTO changes(task_id, step_id, path, old_text, new_text, diff, added, removed, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (task_id, step_id, c["path"], c["old_text"], c["new_text"], c["diff"], c["added"],
+                     c["removed"], now),
+                )
+                ids.append(int(cur.lastrowid))
+            self._db.commit()
+        return ids
+
+    def get_changes(self, step_id: int, status: str | None = None) -> list[dict]:
+        query = "SELECT * FROM changes WHERE step_id = ?"
+        args: tuple = (step_id,)
+        if status:
+            query += " AND status = ?"
+            args = (step_id, status)
+        with self._lock:
+            rows = self._db.execute(query + " ORDER BY id", args).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_change(self, change_id: int) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM changes WHERE id = ?", (change_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_change(self, change_id: int, status: str, note: str = "") -> None:
+        if status not in CHANGE_STATUSES:
+            raise ValueError(f"status must be one of {CHANGE_STATUSES}")
+        with self._lock:
+            self._db.execute("UPDATE changes SET status = ?, note = ? WHERE id = ?", (status, note or None, change_id))
+            self._db.commit()
 
     # ---- conversation ------------------------------------------------------
     def add_message(self, role: str, content: str, task_id: int | None = None) -> None:
@@ -294,3 +370,12 @@ class Memory:
                 scored.append((overlap, lesson["id"], lesson))
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
         return rules + [l for _, _, l in scored[:limit]]
+
+
+def _loads(text):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None

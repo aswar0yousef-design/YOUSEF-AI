@@ -214,6 +214,47 @@ button { cursor: pointer; }
 .feedback-note input { flex: 1; }
 .saved { color: var(--ok); }
 
+.task-meta { margin: -10px 0 16px; font-size: 14px; color: var(--muted); }
+
+/* coder: tools used and proposed file changes */
+.trace { margin-top: 8px; font-size: 13px; }
+.trace > summary { cursor: pointer; color: var(--muted); width: fit-content; }
+.trace ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+.trace li span { color: var(--ink); font-weight: 600; }
+.trace li.bad { color: var(--danger); }
+.trace li em { font-style: normal; }
+
+.changes { margin-top: 10px; display: grid; gap: 8px; }
+.explain { margin-top: 10px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.change { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.change > summary {
+  cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  padding: 8px 12px; font-size: 14px;
+}
+.change .path { font-family: var(--font-code); font-size: 13px; font-weight: 600; }
+.change .new { font-size: 12px; color: var(--door); }
+.plus { color: var(--ok); font-family: var(--font-code); font-size: 12px; }
+.minus { color: var(--danger); font-family: var(--font-code); font-size: 12px; }
+.cstatus { font-size: 12px; padding: 0 8px; border-radius: 999px; background: var(--saffron-tint); }
+.cstatus.is-applied { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.cstatus.is-rejected, .cstatus.is-conflict, .cstatus.is-error { background: var(--danger-tint); }
+.cnote { font-size: 12px; color: var(--muted); }
+.diff {
+  margin: 0; padding: 8px 0; overflow-x: auto; border-top: 1px solid var(--line);
+  font-family: var(--font-code); font-size: 12.5px; line-height: 1.5; background: var(--bg);
+}
+.diff span { display: block; padding: 0 12px; white-space: pre; }
+.diff .add { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.diff .del { background: var(--danger-tint); }
+.diff .hunk { color: var(--door); }
+.diff .meta { color: var(--muted); }
+
+.composer-meta { max-width: var(--column); margin: 6px auto 0; display: flex; align-items: center; gap: 12px; }
+.composer-meta .hint { margin: 0; flex: 1; }
+.ws-pick { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.ws-pick select { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 2px 8px; font-size: 13px; }
+.muted { color: var(--muted); font-size: 13px; }
+
 /* ---------- rendered text ---------- */
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
@@ -249,6 +290,7 @@ button { cursor: pointer; }
 }
 .composer textarea:focus-visible { outline: none; }
 .hint { max-width: var(--column); margin: 6px auto 0; font-size: 12px; color: var(--muted); }
+.composer-meta .hint { max-width: none; }
 .hint.is-error { color: var(--danger); font-size: 13px; }
 
 /* ---------- voice ---------- */

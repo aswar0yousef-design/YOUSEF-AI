@@ -19,7 +19,7 @@ import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
 from .config import CLOUD_PROVIDERS, SettingsError
@@ -27,6 +27,7 @@ from .core import AGENTS
 from .keystore import KeyStoreError
 from .models import ProviderError
 from .voice import AudioError, VoiceNotInstalled, VoiceNotReady
+from .workspace import WorkspaceError, registry
 
 log = logging.getLogger("yousef.server")
 
@@ -187,6 +188,29 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
     return Server((host, port), Handler)
 
 
+def _clean_context(raw) -> dict:
+    """Editor context sent by the VS Code extension (or nothing)."""
+    if raw in (None, {}):
+        return {}
+    if not isinstance(raw, dict):
+        raise ApiError(400, "context must be an object")
+    out = {}
+    for key, limit in (("file", 500), ("language", 40), ("selection", 20000)):
+        value = raw.get(key)
+        if value is not None:
+            if not isinstance(value, str):
+                raise ApiError(400, f"context.{key} must be text")
+            if value.strip():
+                out[key] = value[:limit]
+    for key in ("start_line", "end_line"):
+        value = raw.get(key)
+        if value is not None:
+            if not isinstance(value, int) or value < 0:
+                raise ApiError(400, f"context.{key} must be a line number")
+            out[key] = value
+    return out
+
+
 def _int(value: str) -> int:
     try:
         return int(value)
@@ -215,6 +239,10 @@ class Api:
             ("GET", r"/api/lessons", self.list_lessons),
             ("POST", r"/api/lessons", self.add_lesson),
             ("DELETE", r"/api/lessons/(\d+)", self.delete_lesson),
+            ("GET", r"/api/workspaces", self.list_workspaces),
+            ("POST", r"/api/workspaces", self.add_workspace),
+            ("DELETE", r"/api/workspaces/(.+)", self.remove_workspace),
+            ("GET", r"/api/changes/(\d+)", self.get_change),
             ("GET", r"/api/voice/status", self.voice_status),
             ("POST", r"/api/voice/load", self.voice_load),
             ("POST", r"/api/voice/transcribe", self.voice_transcribe),
@@ -258,8 +286,15 @@ class Api:
         source = body.get("source", "text")
         if source not in ("text", "voice"):
             raise ApiError(400, "source must be text or voice")
+        context = _clean_context(body.get("context"))
+        workspace = body.get("workspace") or None
+        if workspace is not None:
+            entry = registry.find(self.app.settings, str(workspace))
+            if entry is None:
+                raise ApiError(403, "workspace_not_allowed")
+            workspace = entry["name"]
         try:
-            task_id = self.app.orchestrator.submit(str(body.get("request", "")), source)
+            task_id = self.app.orchestrator.submit(str(body.get("request", "")), source, workspace, context)
         except ValueError as e:
             raise ApiError(400, str(e)) from None
         return 201, {"task": self.app.memory.get_task(task_id)}
@@ -371,3 +406,28 @@ class Api:
             raise ApiError(501, "الصوت غير مثبّت. شغّل install-voice.bat مرة واحدة ثم أعد تشغيل يوسف.") from None
         except VoiceNotReady as e:
             raise ApiError(503, str(e)) from None
+
+    # ---- project folders -------------------------------------------------------
+    def list_workspaces(self, query, body):
+        return 200, {"workspaces": registry.list_workspaces(self.app.settings)}
+
+    def add_workspace(self, query, body):
+        try:
+            entry = registry.add(self.app.settings, str(body.get("path", "")), body.get("name") or None)
+        except WorkspaceError as e:
+            raise ApiError(400, str(e)) from None
+        return 201, {"workspace": entry, "workspaces": registry.list_workspaces(self.app.settings)}
+
+    def remove_workspace(self, name, query, body):
+        if not registry.remove(self.app.settings, unquote(name)):
+            raise ApiError(404, "workspace not found")
+        return 200, {"workspaces": registry.list_workspaces(self.app.settings)}
+
+    def get_change(self, change_id, query, body):
+        change = self.app.memory.get_change(_int(change_id))
+        if not change:
+            raise ApiError(404, "change not found")
+        task = self.app.memory.get_task(change["task_id"])
+        entry = registry.find(self.app.settings, task.get("workspace")) if task else None
+        change["workspace"] = entry
+        return 200, {"change": change}

@@ -18,8 +18,9 @@ class OllamaProvider(Provider):
     label = "Ollama (محلي)"
     is_local = True
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, num_ctx: int = 8192):
         self.base_url = base_url.rstrip("/")
+        self.num_ctx = num_ctx
 
     def list_models(self) -> list[str]:
         data = http_json("GET", f"{self.base_url}/api/tags", timeout=5, opener=NO_PROXY_OPENER) or {}
@@ -29,7 +30,8 @@ class OllamaProvider(Provider):
         return [m for m in self.list_models() if not any(h in m.lower() for h in _EMBED_HINTS)]
 
     def chat(self, model, messages, *, json_mode=False):
-        body = {"model": model, "messages": messages, "stream": False, "options": {"temperature": 0.3}}
+        body = {"model": model, "messages": messages, "stream": False,
+                "options": {"temperature": 0.3, "num_ctx": self.num_ctx}}
         if json_mode:
             body["format"] = "json"
         # First call can be slow while the model loads into GPU memory.

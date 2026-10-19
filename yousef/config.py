@@ -28,6 +28,8 @@ DEFAULT_SETTINGS: dict = {
     "ollama_url": "http://127.0.0.1:11434",
     # empty = pick the first installed chat model automatically
     "local_model": "",
+    # context window for Ollama models (tokens); the coder's tool loop needs room
+    "ollama_ctx": 8192,
     "cloud_models": {"anthropic": "", "openai": "", "gemini": ""},
     "cloud_order": ["anthropic", "openai", "gemini"],
     # local = local first, cloud as fallback; cloud = cloud first, local as fallback
@@ -40,6 +42,8 @@ DEFAULT_SETTINGS: dict = {
     },
     # how many previous user/assistant turns are given to the agents as context
     "history_turns": 4,
+    # project folders the coder may read and propose changes in: [{"name", "path"}]
+    "workspaces": [],
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "small",
@@ -111,7 +115,29 @@ def _validate(merged: dict) -> dict:
     if not isinstance(turns, int) or not 0 <= turns <= 20:
         raise SettingsError("history_turns must be between 0 and 20")
     s["voice"] = _validate_voice(s.get("voice"))
+    ctx = s.get("ollama_ctx")
+    if not isinstance(ctx, int) or not 2048 <= ctx <= 131072:
+        raise SettingsError("ollama_ctx must be between 2048 and 131072")
+    s["workspaces"] = _validate_workspaces(s.get("workspaces"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
+
+
+def _validate_workspaces(items) -> list:
+    if not isinstance(items, list) or len(items) > 30:
+        raise SettingsError("workspaces must be a list of at most 30 folders")
+    out, names = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise SettingsError("each workspace needs a name and a path")
+        name = str(item.get("name") or "").strip()
+        path = str(item.get("path") or "").strip()
+        if not 1 <= len(name) <= 60 or not path or not (os.path.isabs(path) or path.startswith("\\\\")):
+            raise SettingsError("each workspace needs a name (1-60 letters) and an absolute path")
+        if name.lower() in names:
+            raise SettingsError(f"workspace name used twice: {name}")
+        names.add(name.lower())
+        out.append({"name": name, "path": path})
+    return out
 
 
 def _validate_voice(voice) -> dict:

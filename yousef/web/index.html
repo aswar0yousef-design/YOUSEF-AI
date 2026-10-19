@@ -63,7 +63,13 @@
       </button>
       <button type="submit" id="send" class="primary">أرسل</button>
     </div>
-    <p class="hint" id="composer-hint">للإرسال اضغط Enter، ولسطر جديد Shift+Enter.</p>
+    <div class="composer-meta">
+      <p class="hint" id="composer-hint">للإرسال اضغط Enter، ولسطر جديد Shift+Enter.</p>
+      <label class="ws-pick" id="ws-pick" hidden>
+        <span>المشروع</span>
+        <select id="workspace"><option value="">بدون مشروع</option></select>
+      </label>
+    </div>
   </form>
 
   <div id="scrim" class="scrim" hidden></div>
@@ -102,6 +108,18 @@
       <div id="routing" class="routing"></div>
       <button type="button" class="primary" id="btn-save-settings">احفظ الإعدادات</button>
       <p class="status-line" id="settings-status" role="status"></p>
+    </section>
+
+    <section class="panel" id="projects-panel">
+      <h3>مجلدات المشاريع</h3>
+      <p class="panel-note">يقرأ المبرمج ملفات هذه المجلدات فقط، ويقترح التعديلات كفروقات لا تُكتب إلا بموافقتك. ملفات الأسرار مثل .env والمفاتيح لا تُقرأ أبدًا.</p>
+      <label for="ws-path">مسار المجلد</label>
+      <div class="row">
+        <input id="ws-path" type="text" dir="ltr" spellcheck="false" placeholder="C:\Users\you\projects\my-site">
+        <button type="button" class="ghost" id="btn-add-ws">أضف المجلد</button>
+      </div>
+      <p class="status-line" id="ws-status" role="status"></p>
+      <ul id="ws-list" class="lessons"></ul>
     </section>
 
     <section class="panel" id="voice-panel">

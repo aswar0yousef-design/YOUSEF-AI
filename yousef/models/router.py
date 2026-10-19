@@ -35,7 +35,7 @@ class Completion:
 
 def default_factory(name: str, settings: dict, keystore: KeyStore) -> Provider | None:
     if name == "ollama":
-        return OllamaProvider(settings["ollama_url"])
+        return OllamaProvider(settings["ollama_url"], settings.get("ollama_ctx", 8192))
     cls = CLOUD_CLASSES.get(name)
     key = keystore.get(name) if cls else None
     return cls(key) if cls and key else None
