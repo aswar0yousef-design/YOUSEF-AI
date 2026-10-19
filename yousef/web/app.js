@@ -22,6 +22,8 @@ const TOOL_LABEL = {
   list_stores: "عرض المتاجر", store_info: "معلومات المتجر", list_products: "عرض المنتجات", get_product: "قراءة منتج",
   list_orders: "عرض الطلبات", sales_summary: "ملخص المبيعات", propose_product: "منتج مقترح",
   propose_update: "تعديل مقترح", list_discounts: "عرض العروض", propose_discount: "عرض مقترح",
+  list_accounts: "عرض الحسابات", recent_posts: "آخر المنشورات", list_scheduled: "المنشورات المجدولة",
+  list_media: "مكتبة الصور", propose_post: "منشور مقترح", propose_cancel: "إلغاء منشور مقترح",
   propose_end_discount: "إيقاف عرض مقترح", propose_bundle: "باقة مقترحة",
   git_commit: "commit مقترح", git_push: "push مقترح", open_pr: "Pull Request مقترح",
   site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود", check_dependencies: "فحص الحزم",
@@ -34,7 +36,12 @@ const FIELD_LABEL = {
 };
 const PROPOSAL_KIND = {
   store_create_product: "منتج جديد", store_update_product: "تعديل منتج", store_create_discount: "عرض جديد",
-  store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة",
+  store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
+  social_cancel: "إلغاء منشور مجدول",
+};
+const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
+const POST_STATUS = {
+  scheduled: "مجدول", publishing: "يُنشر الآن", published: "نُشر", failed: "تعذّر", cancelled: "أُلغي", missed: "فات موعده",
 };
 const PRODUCT_STATUS = { draft: "مسودة", active: "منشور", archived: "مؤرشف" };
 const PLATFORM = { shopify: "Shopify", woocommerce: "WooCommerce" };
@@ -51,7 +58,7 @@ const ACTIVE = new Set(["planning", "running", "waiting"]);
 const $ = (sel, root = document) => root.querySelector(sel);
 const state = {
   tasks: new Map(), open: new Set(), status: null, settings: null, keys: null, agents: [], pollTimer: null, workspaces: [],
-  stores: [], unticked: new Set(), social: [],
+  stores: [], unticked: new Set(), social: [], posts: [], attached: [],
 };
 
 const store = {
@@ -228,8 +235,9 @@ function stepHTML(step, task, hideOutput) {
   }
   const changes = step.changes || [];
   const allActions = step.actions || [];
-  const proposals = allActions.filter((a) => a.kind.startsWith("store_"));
-  const actions = allActions.filter((a) => !a.kind.startsWith("store_"));
+  const external = (a) => a.kind.startsWith("store_") || a.kind.startsWith("social_");
+  const proposals = allActions.filter(external);
+  const actions = allActions.filter((a) => !external(a));
   const pendingChanges = changes.filter((c) => c.status === "pending").length;
   const pendingActions = actions.filter((a) => a.status === "pending");
   const pendingProposals = proposals.filter((a) => a.status === "pending");
@@ -250,9 +258,14 @@ function stepHTML(step, task, hideOutput) {
     let summary = parts.join("، ثم ");
     if (storeBits.length) summary += (summary ? "، وفي المتجر: " : "") + storeBits.join("، و");
     const onlyStore = !pendingChanges && !pendingActions.length;
-    const how = pendingProposals.length > 1 || (pendingProposals.length && !onlyStore)
+    const posts = pendingProposals.length && pendingProposals.every((a) => a.kind.startsWith("social_"));
+    let how = pendingProposals.length > 1 || (pendingProposals.length && !onlyStore)
       ? "أزل علامة ما لا تريده من تغييرات المتجر، ثم قرّر." : "راجعها، ثم قرّر.";
-    const safe = onlyStore ? "لن يتغيّر شيء في المتجر قبل موافقتك." : "لن يُنفَّذ شيء قبل موافقتك.";
+    let safe = onlyStore ? "لن يتغيّر شيء في المتجر قبل موافقتك." : "لن يُنفَّذ شيء قبل موافقتك.";
+    if (posts) {
+      how = pendingProposals.length > 1 ? "أزل علامة ما لا تريد نشره، ثم قرّر." : "راجعه، ثم قرّر.";
+      safe = "لن يُنشر شيء قبل موافقتك.";
+    }
     let approve = "طبّق التعديلات";
     if (pendingProposals.length) approve = "طبّق المحدد";
     else if (pendingActions.length) approve = "طبّق الكل";
@@ -309,7 +322,18 @@ function storeParts(proposals) {
   if (n("store_create_discount")) parts.push(`إنشاء ${countOffers(n("store_create_discount"))}`);
   if (n("store_end_discount")) parts.push(`إيقاف ${countOffers(n("store_end_discount"))}`);
   if (n("store_create_bundle")) parts.push(`إنشاء ${countBundles(n("store_create_bundle"))}`);
+  const now = proposals.filter((a) => a.kind === "social_post" && !a.payload.when).length;
+  const later = n("social_post") - now;
+  if (now) parts.push(`نشر ${countPosts(now)}`);
+  if (later) parts.push(`جدولة ${countPosts(later)}`);
+  if (n("social_cancel")) parts.push(`إلغاء ${countPosts(n("social_cancel"))} مجدول`);
   return parts;
+}
+
+function countPosts(n) {
+  if (n === 1) return "منشور واحد";
+  if (n === 2) return "منشورين";
+  return n <= 10 ? `${n} منشورات` : `${n} منشورًا`;
 }
 
 function countOrders(n) {
@@ -346,10 +370,54 @@ function fieldValue(field, value) {
   return `<span dir="auto">${esc(value)}</span>`;
 }
 
+// text with its links clickable (results of publishing carry the post links)
+function linkify(text) {
+  return esc(text).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+}
+
+function postText(text) {
+  return esc(text).replace(/(^|\s)([#@][\p{L}\p{N}_.]+)/gu, '$1<span class="tagword">$2</span>');
+}
+
+function whenLabel(iso) {
+  if (!iso) return "فور الموافقة";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("ar-u-nu-latn", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function postHTML(a, pick) {
+  const p = a.payload || {};
+  const both = (p.platforms || []).length > 1 && p.text_instagram && p.text_instagram !== p.text;
+  const blocks = both
+    ? `<p class="plabel">فيسبوك</p><div class="ptext" dir="auto">${postText(p.text)}</div>`
+      + `<p class="plabel">إنستغرام</p><div class="ptext" dir="auto">${postText(p.text_instagram)}</div>`
+    : `<div class="ptext" dir="auto">${postText((p.platforms || [])[0] === "instagram" ? (p.text_instagram || p.text) : p.text)}</div>`;
+  const images = (p.images || []).length
+    ? `<div class="pimages n${Math.min(p.images.length, 4)}">${p.images.slice(0, 4).map((i, k) => `<span class="pimg">`
+      + `<img src="${esc(i.preview)}" alt="" loading="lazy">${k === 3 && p.images.length > 4 ? `<b>+${p.images.length - 4}</b>` : ""}</span>`).join("")}</div>`
+    : "";
+  const meta = [`<span>${p.when ? "يُنشر" : "الموعد"}: <bdi>${esc(whenLabel(p.when))}</bdi></span>`];
+  if (p.link) meta.push(`<span>الرابط: <bdi dir="ltr">${esc(p.link)}</bdi></span>`);
+  const warn = (p.warnings || []).map((w) => `<p class="pwarn" dir="auto">تنبيه: ${esc(w)}</p>`).join("");
+  const result = a.result ? `<p class="presult cnote" dir="auto">${linkify(a.result).replace(/\n/g, "<br>")}</p>` : "";
+  return `<article class="proposal post-card is-${esc(a.status)} kind-social_post"><header><label class="phead">${pick}`
+    + `<span class="pkind">${p.when ? "منشور مجدول" : "منشور"}</span> <strong dir="auto">${esc(p.account || "")}</strong>`
+    + `${p.ig_username && (p.platforms || []).includes("instagram") ? ` <bdi dir="ltr" class="muted">@${esc(p.ig_username)}</bdi>` : ""}</label>`
+    + `<span class="pchips">${(p.platforms || []).map((x) => `<span class="pchip pl-${esc(x)}">${PLATFORM_AR[x] || esc(x)}</span>`).join("")}</span>`
+    + `<span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span></header>`
+    + `${images}${blocks}<p class="pmeta">${meta.join(" · ")}</p>${warn}${result}</article>`;
+}
+
 function proposalsHTML(proposals, step) {
   const waiting = step.status === "awaiting_approval";
   return `<div class="proposals" data-proposals="${step.id}">${proposals.map((a) => {
     const p = a.payload || {};
+    if (a.kind === "social_post") {
+      const pick = waiting && a.status === "pending"
+        ? `<input type="checkbox" class="pick" data-action="${a.id}" aria-label="ضمن الموافقة"${state.unticked.has(a.id) ? "" : " checked"}>`
+        : "";
+      return postHTML(a, pick);
+    }
     const creating = a.kind === "store_create_product";
     const listed = Array.isArray(p.rows);  // offers and bundles: label / value rows
     const fields = Object.keys(p.after || {});
@@ -374,7 +442,7 @@ function proposalsHTML(proposals, step) {
     const title = creating ? (p.after || {}).title : p.title;
     return `<article class="proposal is-${esc(a.status)} kind-${esc(a.kind)}"><header><label class="phead">${pick}`
       + `<span class="pkind">${PROPOSAL_KIND[a.kind] || esc(a.kind)}</span> <strong dir="auto">${esc(title || "")}</strong></label>`
-      + `<span class="pstore">${esc(p.store || "")} · ${PLATFORM[p.platform] || ""}</span>`
+      + `<span class="pstore">${esc(p.store || p.account || "")}${PLATFORM[p.platform] ? ` · ${PLATFORM[p.platform]}` : ""}</span>`
       + `<span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span></header>`
       + `<table class="ba"><thead><tr>${head}</tr></thead>`
       + `<tbody>${rows}</tbody></table>${warn}${result}</article>`;
@@ -444,10 +512,23 @@ function footHTML(t) {
   return parts.length ? `<div class="task-foot">${parts.join("")}</div>` : "";
 }
 
+// the pictures sent with a request travel as a last line of "media:" names; show them as pictures
+const MEDIA_LINE = /\n*الصور المرفقة: ((?:media:img-[0-9a-f]{16}\.(?:jpg|png)\s*)+)$/;
+
+function splitMedia(request) {
+  const m = String(request || "").match(MEDIA_LINE);
+  if (!m) return { text: request, media: [] };
+  return { text: request.slice(0, m.index), media: m[1].trim().split(/\s+/).map((x) => x.slice(6)) };
+}
+
 function taskHTML(t) {
   const steps = t.steps || [];
   const singleDone = steps.length === 1 && t.status === "done";
-  let h = `<h2 class="ask" dir="auto">${esc(t.request)}</h2>`;
+  const asked = splitMedia(t.request);
+  let h = `<h2 class="ask" dir="auto">${esc(asked.text)}</h2>`;
+  if (asked.media.length) {
+    h += `<p class="ask-media">${asked.media.map((n) => `<img src="/api/media/${esc(n)}" alt="صورة مرفقة" loading="lazy">`).join("")}</p>`;
+  }
   const ctx = t.context || {};
   const meta = [];
   if (t.source === "vscode") meta.push("من VS Code");
@@ -524,11 +605,15 @@ async function submit(text, source = "text") {
   try {
     const workspace = $("#workspace").value || null;
     const storeId = $("#store").value || null;
-    const { task } = await api("POST", "/api/tasks", { request: text, source, workspace, store: storeId });
+    let request = text;
+    if (state.attached.length) request += `\n\nالصور المرفقة: ${state.attached.map((m) => `media:${m.name}`).join(" ")}`;
+    const { task } = await api("POST", "/api/tasks", { request, source, workspace, store: storeId });
     if (source === "text") {
       els.input.value = "";
       autosize();
     }
+    state.attached = [];
+    renderAttached();
     const el = renderTask(task);
     notifyTask(task, null);
     el.scrollIntoView({ block: "start" });
@@ -898,6 +983,80 @@ async function loadSocial() {
     state.social = [];
   }
   renderSocial();
+  $("#attach").hidden = state.social.length === 0;
+  await loadPosts();
+}
+
+async function loadPosts() {
+  try {
+    state.posts = (await api("GET", "/api/social/posts?status=scheduled,missed,failed,publishing&limit=30")).posts;
+  } catch (e) {
+    state.posts = [];
+  }
+  renderPosts();
+}
+
+function renderPosts() {
+  const ul = $("#post-list");
+  ul.replaceChildren();
+  $("#posts-title").hidden = ul.hidden = state.posts.length === 0;
+  for (const post of state.posts) {
+    const li = document.createElement("li");
+    li.className = `ws-item post-row is-${post.status}`;
+    const when = post.scheduled_at ? whenLabel(new Date(post.scheduled_at * 1000).toISOString()) : "";
+    const who = post.status === "scheduled" ? (post.native ? "يحتفظ به فيسبوك" : "ينشره يوسف في موعده") : "";
+    const actions = [];
+    if (["scheduled", "missed"].includes(post.status)) actions.push(`<button type="button" class="link" data-post-act="cancel" data-post="${post.id}">ألغِه</button>`);
+    if (["missed", "failed"].includes(post.status) && !post.native) actions.push(`<button type="button" class="link" data-post-act="publish" data-post="${post.id}">انشر الآن</button>`);
+    li.innerHTML = `<div class="ws-head"><p><span class="pchip pl-${esc(post.platform)}">${PLATFORM_AR[post.platform] || esc(post.platform)}</span> `
+      + `<strong>${esc(post.account)}</strong> <span class="cstatus is-${esc(post.status)}">${POST_STATUS[post.status] || esc(post.status)}</span>`
+      + `<br><span class="muted"><bdi>${esc(when)}</bdi>${who ? ` · ${who}` : ""}</span><br><span dir="auto">${esc(post.text.slice(0, 90))}${post.text.length > 90 ? "…" : ""}</span>`
+      + `${post.error ? `<br><em dir="auto">${esc(post.error)}</em>` : ""}</p>`
+      + `<span class="row-actions">${actions.join("")}</span></div><p class="status-line" role="status"></p>`;
+    ul.appendChild(li);
+  }
+}
+
+function renderAttached() {
+  const ul = $("#attached");
+  ul.replaceChildren();
+  ul.hidden = state.attached.length === 0;
+  for (const m of state.attached) {
+    const li = document.createElement("li");
+    li.innerHTML = `<img src="${esc(m.url)}" alt=""><span dir="auto">${esc(m.label || m.name)}</span>`
+      + `<button type="button" class="link" data-unattach="${esc(m.name)}" aria-label="أزل الصورة">×</button>`;
+    ul.appendChild(li);
+  }
+}
+
+async function uploadImage(file) {
+  if (!/^image\/(jpeg|png)$/.test(file.type)) throw new Error(`«${file.name}»: الصورة يجب أن تكون JPEG أو PNG`);
+  if (file.size > 8000000) throw new Error(`«${file.name}» أكبر من 8MB`);
+  let res;
+  try {
+    res = await fetch("/api/media", {
+      method: "POST", body: file,
+      headers: { "X-Yousef-Client": "1", "Content-Type": file.type, "X-File-Name": encodeURIComponent(file.name) },
+    });
+  } catch (e) {
+    throw new Error("تعذّر الاتصال بيوسف. تأكد أن نافذة التشغيل ما زالت مفتوحة.");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `خطأ ${res.status}`);
+  return data.media;
+}
+
+async function attachFiles(files) {
+  for (const file of files) {
+    if (state.attached.length >= 10) { showHint("يكفي 10 صور للمنشور الواحد.", true); break; }
+    try {
+      const media = await uploadImage(file);
+      if (!state.attached.some((m) => m.name === media.name)) state.attached.push(media);
+    } catch (e) {
+      showHint(e.message, true);
+    }
+  }
+  renderAttached();
 }
 
 async function loadStores() {
@@ -1134,6 +1293,47 @@ document.addEventListener("DOMContentLoaded", async () => {
       btn.disabled = false;
     }
   });
+  $("#attach").addEventListener("click", () => $("#attach-file").click());
+  $("#attach-file").addEventListener("change", async (e) => {
+    await attachFiles([...e.target.files]);
+    e.target.value = "";
+    els.input.focus();
+  });
+  $("#attached").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-unattach]");
+    if (!btn) return;
+    state.attached = state.attached.filter((m) => m.name !== btn.dataset.unattach);
+    renderAttached();
+  });
+  $(".composer-box").addEventListener("dragover", (e) => {
+    if (state.social.length && [...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
+  });
+  $(".composer-box").addEventListener("drop", (e) => {
+    if (!state.social.length) return;
+    const files = [...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith("image/"));
+    if (!files.length) return;
+    e.preventDefault();
+    attachFiles(files);
+  });
+  $("#post-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-post-act]");
+    if (!btn) return;
+    const line = btn.closest("li").querySelector(".status-line");
+    line.classList.remove("is-error");
+    const act = btn.dataset.postAct;
+    if (act === "cancel" && !confirm("إلغاء هذا المنشور المجدول؟")) return;
+    btn.disabled = true;
+    line.textContent = act === "cancel" ? "يلغي…" : "ينشر…";
+    try {
+      const data = await api("POST", `/api/social/posts/${btn.dataset.post}/${act}`, {});
+      line.textContent = act === "cancel" ? data.note : (data.post.status === "published" ? "نُشر." : (data.post.error || "تعذّر النشر"));
+      setTimeout(loadPosts, 1200);
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
+      btn.disabled = false;
+    }
+  });
   $("#social-list").addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-social-act]");
     if (!btn) return;
@@ -1284,6 +1484,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadWorkspaces();
   await loadStores();
   await loadSocial();
+  if (state.posts.some((p) => p.status === "missed")) {
+    showHint("منشور مجدول فات موعده بينما كان يوسف مغلقًا. راجعه من الإعدادات، في «حسابات السوشيال».", true);
+  }
   try { await loadTasks(); } catch (e) { els.empty.hidden = false; showHint(e.message, true); }
   setInterval(() => loadStatus(), 30000);
   els.input.focus();

@@ -58,11 +58,16 @@
     <label class="sr" for="input">اكتب طلبك</label>
     <div class="composer-box">
       <textarea id="input" rows="1" maxlength="8000" placeholder="اطلب منشورًا، تحليلًا، كودًا، خطة…"></textarea>
+      <button type="button" id="attach" class="mic" aria-label="أرفق صورًا للمنشور" title="أرفق صورًا للمنشور (JPEG أو PNG)" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 15.5l-5-5-8.5 8.5"/></svg>
+      </button>
+      <input type="file" id="attach-file" accept="image/jpeg,image/png" multiple hidden>
       <button type="button" id="mic" class="mic" aria-label="تحدّث" title="تحدّث" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
       </button>
       <button type="submit" id="send" class="primary">أرسل</button>
     </div>
+    <ul class="attached" id="attached" hidden aria-label="الصور المرفقة"></ul>
     <div class="composer-meta">
       <p class="hint" id="composer-hint">للإرسال اضغط Enter، ولسطر جديد Shift+Enter.</p>
       <label class="ws-pick" id="store-pick" hidden>
@@ -162,6 +167,8 @@
       <h3>حسابات السوشيال</h3>
       <p class="panel-note">صفحات فيسبوك وحسابات إنستغرام التجارية المرتبطة بها. ناشر السوشيال يكتب المنشورات ويقترحها، ولا يُنشر شيء إلا بموافقتك.</p>
       <ul id="social-list" class="lessons"></ul>
+      <h4 class="sub" id="posts-title" hidden>المنشورات المجدولة</h4>
+      <ul id="post-list" class="lessons posts" hidden></ul>
       <details class="add-store" id="social-connect">
         <summary>اربط صفحاتك</summary>
         <ol class="panel-note steps-note">

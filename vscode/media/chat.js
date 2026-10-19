@@ -6,7 +6,7 @@
 
   const AGENTS = {
     general: "المساعد العام", coder: "المبرمج", writer: "صانع المحتوى", analyst: "المحلل", store_manager: "مدير المتاجر",
-    tech_manager: "المدير التقني",
+    tech_manager: "المدير التقني", social_publisher: "ناشر السوشيال",
   };
   const TOOL_LABEL = {
     list_files: "عرض مجلد", read_file: "قراءة", search: "بحث", replace: "تعديل مقترح", write_file: "ملف مقترح",
@@ -16,12 +16,16 @@
     list_orders: "عرض الطلبات", sales_summary: "ملخص المبيعات", propose_product: "منتج مقترح", propose_update: "تعديل مقترح",
     list_discounts: "عرض العروض", propose_discount: "عرض مقترح", propose_end_discount: "إيقاف عرض مقترح",
     propose_bundle: "باقة مقترحة", site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود",
-    check_dependencies: "فحص الحزم",
+    check_dependencies: "فحص الحزم", list_accounts: "عرض الحسابات", recent_posts: "آخر المنشورات",
+    list_scheduled: "المنشورات المجدولة", list_media: "مكتبة الصور", propose_post: "منشور مقترح",
+    propose_cancel: "إلغاء منشور مقترح",
   };
+  const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
   const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
   const PROPOSAL_KIND = {
     store_create_product: "منتج جديد", store_update_product: "تعديل", store_create_discount: "عرض جديد",
-    store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة",
+    store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
+    social_cancel: "إلغاء منشور مجدول",
   };
   const TASK_STATE = {
     planning: "يخطّط…", running: "يعمل…", waiting: "ينتظر موافقتك", failed: "تعثّرت المهمة",
@@ -149,12 +153,13 @@
   }
 
   function proposalsHTML(step) {
-    const items = (step.actions || []).filter((a) => a.kind.startsWith("store_"));
+    const items = (step.actions || []).filter(external);
     if (!items.length) return "";
     const waiting = step.status === "awaiting_approval";
     return `<div class="proposals" data-proposals="${step.id}">${items.map((a) => {
       const p = a.payload || {};
       const creating = a.kind === "store_create_product";
+      if (a.kind === "social_post") return postHTML(a, waiting);
       const rows = Array.isArray(p.rows)  // offers and bundles: label / value rows
         ? p.rows.map((r) => `<tr><th dir="auto">${esc(r.label)}</th><td class="new" dir="${/[\u0600-\u06FF]/.test(String(r.value)) ? "rtl" : "auto"}">${esc(r.value)}</td></tr>`).join("")
         : Object.keys(p.after || {}).map((f) => `<tr><th>${FIELD_LABEL[f] || esc(f)}</th>`
@@ -172,8 +177,32 @@
     }).join("")}</div>`;
   }
 
+  // a post as text: the panel cannot load the pictures, so it says how many
+  function postHTML(a, waiting) {
+    const p = a.payload || {};
+    const pick = waiting && a.status === "pending"
+      ? `<input type="checkbox" class="pick" data-action="${a.id}" aria-label="ضمن الموافقة"${unticked.has(a.id) ? "" : " checked"}>` : "";
+    const both = (p.platforms || []).length > 1 && p.text_instagram && p.text_instagram !== p.text;
+    const text = (t) => `<div class="ptext" dir="auto">${esc(t)}</div>`;
+    const body = both ? `<p class="muted">فيسبوك</p>${text(p.text)}<p class="muted">إنستغرام</p>${text(p.text_instagram)}`
+      : text((p.platforms || [])[0] === "instagram" ? (p.text_instagram || p.text) : p.text);
+    const when = p.when ? new Date(p.when).toLocaleString("ar-u-nu-latn", { dateStyle: "medium", timeStyle: "short" }) : "فور الموافقة";
+    const imgs = (p.images || []).length;
+    return `<div class="proposal is-${esc(a.status)}"><label class="phead">${pick}<span class="pkind">${p.when ? "منشور مجدول" : "منشور"}</span>`
+      + `<strong dir="auto">${esc(p.account || "")}</strong></label>`
+      + `<div class="pmeta"><span class="muted">${(p.platforms || []).map((x) => PLATFORM_AR[x] || x).join(" + ")} · <bdi>${esc(when)}</bdi>`
+      + `${imgs ? ` · ${imgs === 1 ? "صورة واحدة" : imgs === 2 ? "صورتان" : `${imgs} صور`}` : ""}</span>`
+      + `<span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span></div>${body}`
+      + (p.warnings || []).map((w) => `<p class="pwarn" dir="auto">تنبيه: ${esc(w)}</p>`).join("")
+      + (a.result ? `<p class="note" dir="auto">${esc(a.result)}</p>` : "") + "</div>";
+  }
+
+  function external(a) {
+    return a.kind.startsWith("store_") || a.kind.startsWith("social_");
+  }
+
   function actionsHTML(step) {
-    const actions = (step.actions || []).filter((a) => !a.kind.startsWith("store_"));
+    const actions = (step.actions || []).filter((a) => !external(a));
     if (!actions.length) return "";
     return `<ul class="changes actions">${actions.map((a) => {
       const p = a.payload || {};
@@ -204,8 +233,8 @@
     }
     const pending = (step.changes || []).filter((c) => c.status === "pending").length;
     const pendingAll = (step.actions || []).filter((a) => a.status === "pending");
-    const pendingStore = pendingAll.filter((a) => a.kind.startsWith("store_"));
-    const pendingActions = pendingAll.filter((a) => !a.kind.startsWith("store_"));
+    const pendingStore = pendingAll.filter(external);
+    const pendingActions = pendingAll.filter((a) => !external(a));
     if ((pending || pendingAll.length) && step.output) h += `<div class="md explain">${md(step.output)}</div>`;
     h += changesHTML(step) + actionsHTML(step) + proposalsHTML(step);
     if (step.status === "awaiting_approval") {
@@ -213,12 +242,14 @@
       const parts = [];
       if (pending) parts.push(`تعديل ${countFiles(pending)}`);
       if (pendingActions.length) parts.push(pendingActions.map((a) => ACTION_NAME[a.kind] || a.kind).join(" ثم "));
-      if (pendingStore.length) {
-        const n = pendingStore.length;
-        const count = n === 1 ? "تغييرًا واحدًا" : n === 2 ? "تغييرين" : n <= 10 ? `${n} تغييرات` : `${n} تغييرًا`;
+      const posts = pendingStore.filter((a) => a.kind.startsWith("social_")).length;
+      const storeN = pendingStore.length - posts;
+      if (storeN) {
+        const count = storeN === 1 ? "تغييرًا واحدًا" : storeN === 2 ? "تغييرين" : storeN <= 10 ? `${storeN} تغييرات` : `${storeN} تغييرًا`;
         parts.push(`${parts.length ? "و" : ""}${count} على المتجر`);
       }
-      const pick = pendingStore.length ? " أزل علامة ما لا تريده من تغييرات المتجر، ثم قرّر." : " راجعها، ثم قرّر.";
+      if (posts) parts.push(`${parts.length ? "و" : ""}${posts === 1 ? "منشورًا واحدًا" : posts === 2 ? "منشورين" : `${posts} منشورات`}`);
+      const pick = pendingStore.length ? " أزل علامة ما لا تريده، ثم قرّر." : " راجعها، ثم قرّر.";
       let approve = pendingActions.length ? "طبّق الكل" : "طبّق التعديلات";
       if (pendingStore.length) approve = "طبّق المحدد";
       h += parts.length
