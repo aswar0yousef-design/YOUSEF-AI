@@ -67,6 +67,21 @@ def add(settings, path: str, name: str | None = None) -> dict:
     return entry
 
 
+def update(settings, name: str, fields: dict) -> dict:
+    """Change a project's allowed commands or Vercel project."""
+    current = settings.get()["workspaces"]
+    allowed = {"commands", "vercel_project", "vercel_team"}
+    found = None
+    for w in current:
+        if w["name"] == name:
+            w.update({k: v for k, v in fields.items() if k in allowed})
+            found = w
+    if found is None:
+        raise WorkspaceError(f"المشروع «{name}» غير موجود")
+    settings.update({"workspaces": current})
+    return next(w for w in settings.get()["workspaces"] if w["name"] == name)
+
+
 def remove(settings, name: str) -> bool:
     current = settings.get()["workspaces"]
     kept = [w for w in current if w["name"] != name]

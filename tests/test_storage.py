@@ -67,7 +67,8 @@ class KeyStoreTest(unittest.TestCase):
         self.ks.set("anthropic", key)
         self.assertEqual(self.ks.get("anthropic"), key)
         self.assertNotIn("TESTKEY", self.path.read_text())
-        self.assertEqual(self.ks.status(), {"anthropic": True, "openai": False, "gemini": False})
+        self.assertEqual(self.ks.status(), {"anthropic": True, "openai": False, "gemini": False,
+                                            "github": False, "vercel": False})
 
     def test_delete(self):
         self.ks.set("openai", "sk-proj-abcdefghijk")

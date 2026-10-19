@@ -22,7 +22,11 @@ from dataclasses import dataclass, field
 
 from ..memory import Memory
 from ..models import NoModelError, Router
-from ..workspace import Workspace, WorkspaceError, registry
+from ..integrations import GitHub, Vercel
+from ..integrations.github import API as GITHUB_API
+from ..integrations.vercel import API as VERCEL_API
+from ..models.base import ProviderError
+from ..workspace import Services, Workspace, WorkspaceError, git, registry
 from .agents import AGENTS, available_agents, get_agent
 from .coder import run_coder
 from .jsonutil import extract_json
@@ -53,7 +57,7 @@ VOICE_HINT = """The user is talking to you by voice and will hear your answer re
 Open with a short spoken answer: 2 to 4 plain sentences, no markdown, no lists, no symbols.
 If the request needs long content (code, tables, posts, plans), put it after that opening; it will be shown on screen."""
 
-WORKSPACE_NOTE = """The user attached the project folder "{name}". The "coder" agent can list, read and search its files and propose edits (the user approves each change as a diff). Give any step that needs the project's code to "coder"."""
+WORKSPACE_NOTE = """The user attached the project folder "{name}". The "coder" agent can list, read and search its files, propose edits (the user approves each change as a diff), use git (commit, push, pull requests after approval), run the project's allowed commands and check Vercel deployments. Give any step that needs the project to "coder", in ONE step when possible."""
 
 COMPOSE_PROMPT = """Several agents worked on the user's request in steps. Write the final answer for the user from their results.
 - Keep everything the user needs complete: code, posts, drafts, tables. Do not shorten them.
@@ -123,13 +127,17 @@ def _lessons_text(lessons: list[dict]) -> tuple[list[str], str]:
 
 
 class Orchestrator:
-    def __init__(self, memory: Memory, router: Router, settings):
+    def __init__(self, memory: Memory, router: Router, settings, keystore=None):
         self.memory = memory
         self.router = router
         self.settings = settings
+        self.keystore = keystore
+        self.github_api = GITHUB_API
+        self.vercel_api = VERCEL_API
         self._lock = threading.Lock()
         self._events: dict[int, threading.Event] = {}
-        self._decisions: dict[int, bool] = {}
+        self._decisions: dict[int, tuple[bool, str]] = {}
+        self._scopes: dict[int, str] = {}  # step_id -> "all" | "files" after approval
         self._cancelled: set[int] = set()
         self._threads: dict[int, threading.Thread] = {}
         self._shutdown = threading.Event()
@@ -153,7 +161,8 @@ class Orchestrator:
         thread.start()
         return task_id
 
-    def decide(self, step_id: int, approve: bool) -> bool:
+    def decide(self, step_id: int, approve: bool, scope: str = "all") -> bool:
+        """scope "files": write the proposed files but skip commit/push/pull request."""
         step = self.memory.get_step(step_id)
         if not step or step["status"] != "awaiting_approval":
             return False
@@ -161,7 +170,7 @@ class Orchestrator:
             event = self._events.get(step_id)
             if event is None:
                 return False
-            self._decisions[step_id] = bool(approve)
+            self._decisions[step_id] = (bool(approve), "files" if scope == "files" else "all")
         event.set()
         return True
 
@@ -256,6 +265,8 @@ class Orchestrator:
             # in a project, the coder's edits are approved as diffs after it works
             if step["needs_confirmation"] and not coder_in_project:
                 approved = self._wait_for_approval(task_id, step_id)
+                with self._lock:
+                    self._scopes.pop(step_id, None)
                 if approved is None:
                     self._stop(task_id, step_ids)
                     return
@@ -345,8 +356,9 @@ class Orchestrator:
             parts.append(f"Result of an earlier step ({AGENTS[prev_step['agent']].name}):\n{text[:STEP_RESULT_LIMIT]}")
         if step["instruction"].strip() != request.strip():
             parts.append(f"Your step:\n{step['instruction']}")
+        services = self._services(ws)
         try:
-            res = run_coder(self.router, ws, system, "\n\n".join(parts))
+            res = run_coder(self.router, ws, system, "\n\n".join(parts), services=services)
         except NoModelError as e:
             self.memory.update_step(step_id, status="failed", error=str(e), finished_at=time.time())
             self.memory.update_task(task_id, status="failed", error=str(e))
@@ -354,25 +366,97 @@ class Orchestrator:
         trace = json.dumps(res.toolbox.trace, ensure_ascii=False)
         output = res.text
         changes = res.toolbox.change_list()
+        actions = res.toolbox.action_list()
         self.memory.update_step(step_id, output=output, provider=res.provider, model=res.model, trace=trace)
-        if changes:
+        if changes or actions:
             self.memory.add_changes(task_id, step_id, changes)
+            self.memory.add_actions(task_id, step_id, actions)
             approved = self._wait_for_approval(task_id, step_id)
+            with self._lock:
+                scope = self._scopes.pop(step_id, "all")
             pending = self.memory.get_changes(step_id, "pending")
+            pending_actions = self.memory.get_actions(step_id, "pending")
             if approved is None:
                 for c in pending:
                     self.memory.update_change(c["id"], "rejected", "أُلغيت المهمة")
+                for a in pending_actions:
+                    self.memory.update_action(a["id"], "rejected", "أُلغيت المهمة")
                 return None
             if approved:
-                output += "\n\n" + self._apply_changes(ws, pending)
+                applied, summary = self._apply_changes(ws, pending) if pending else ([], "")
+                if summary:
+                    output += "\n\n" + summary
+                if pending_actions:
+                    if scope == "files":
+                        for a in pending_actions:
+                            self.memory.update_action(a["id"], "rejected", "اخترت تطبيق الملفات فقط")
+                        output += "\n\n**git:** لم يُنفَّذ (اخترت تطبيق الملفات فقط)."
+                    elif pending and not applied:
+                        for a in pending_actions:
+                            self.memory.update_action(a["id"], "skipped", "لم يُكتب أي ملف")
+                        output += "\n\n**git:** لم يُنفَّذ لأن الملفات لم تُكتب."
+                    else:
+                        output += "\n\n" + self._run_actions(ws, services, pending_actions, applied)
             else:
                 for c in pending:
                     self.memory.update_change(c["id"], "rejected")
-                output += "\n\n**التعديلات:** رفضها المستخدم، ولم يُكتب أي ملف."
+                for a in pending_actions:
+                    self.memory.update_action(a["id"], "rejected")
+                output += "\n\n**التعديلات:** رفضها المستخدم، ولم يُنفَّذ شيء."
         self.memory.update_step(step_id, status="done", output=output, finished_at=time.time())
         return output
 
-    def _apply_changes(self, ws: Workspace, pending: list[dict]) -> str:
+    def _services(self, ws: Workspace) -> Services:
+        entry = registry.find(self.settings, ws.name) or {}
+        is_repo = git.is_repo(ws.root)
+        remote = git.remote_url(ws.root) if is_repo else None
+        token = self.keystore.get("github") if self.keystore else None
+        vtoken = self.keystore.get("vercel") if self.keystore else None
+        return Services(
+            commands=list(entry.get("commands") or []),
+            git=is_repo,
+            has_remote=bool(remote),
+            github=GitHub(token, self.github_api) if token else None,
+            github_repo=git.parse_github(remote),
+            vercel=Vercel(vtoken, self.vercel_api, team=entry.get("vercel_team") or None) if vtoken else None,
+            vercel_project=entry.get("vercel_project") or None,
+        )
+
+    def _run_actions(self, ws: Workspace, services: Services, actions: list[dict], applied: list[str]) -> str:
+        """Commit, then push, then open the pull request; stop at the first failure."""
+        lines = []
+        failed = False
+        for action in actions:
+            if failed:
+                self.memory.update_action(action["id"], "skipped", "توقّف بعد خطوة فاشلة")
+                continue
+            kind, payload = action["kind"], action["payload"]
+            try:
+                if kind == "git_commit":
+                    result = git.commit(ws.root, payload["message"], None if payload.get("all") else applied,
+                                        payload.get("branch"))
+                    lines.append(f"**commit:** `{result}`")
+                elif kind == "git_push":
+                    result = git.push(ws.root)
+                    lines.append(f"**push:** {result}")
+                elif kind == "open_pr":
+                    if not (services.github and services.github_repo):
+                        raise WorkspaceError("GitHub غير متصل لهذا المستودع")
+                    owner, repo = services.github_repo
+                    pr = services.github.open_pull_request(owner, repo, git.current_branch(ws.root), payload["title"],
+                                                           payload.get("body") or "", payload.get("base"))
+                    result = pr["url"] or f"#{pr['number']}"
+                    lines.append(f"**Pull Request:** {result}")
+                else:
+                    raise WorkspaceError(f"إجراء غير معروف: {kind}")
+                self.memory.update_action(action["id"], "done", result)
+            except (WorkspaceError, ProviderError) as e:
+                failed = True
+                self.memory.update_action(action["id"], "failed", str(e)[:500])
+                lines.append(f"**{kind}:** تعذّر — {e}")
+        return "\n".join(lines)
+
+    def _apply_changes(self, ws: Workspace, pending: list[dict]) -> tuple[list[str], str]:
         by_path = {c["path"]: c for c in pending}
         applied, problems = [], []
         for res in ws.apply(pending):
@@ -387,7 +471,7 @@ class Orchestrator:
             lines.append("**طُبّقت التعديلات على:** " + "، ".join(f"`{p}`" for p in applied))
         if problems:
             lines.append("**لم تُكتب:** " + "، ".join(problems))
-        return "\n".join(lines)
+        return applied, "\n".join(lines)
 
     def _agent_messages(self, agent, step: dict, request: str, history: list[dict],
                         results: list[tuple[dict, str]], lessons: list[dict], speak: bool = False) -> list[dict]:
@@ -449,7 +533,9 @@ class Orchestrator:
             if decision is None:
                 return None
             self.memory.update_task(task_id, status="running")
-            return decision
+            with self._lock:
+                self._scopes[step_id] = decision[1]
+            return decision[0]
         finally:
             with self._lock:
                 self._events.pop(step_id, None)

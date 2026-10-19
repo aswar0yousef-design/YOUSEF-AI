@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 
 from ..models import Router
-from ..workspace import TOOL_HELP, Toolbox, Workspace
+from ..workspace import Services, Toolbox, Workspace
 from .jsonutil import extract_json
 
 log = logging.getLogger("yousef.coder")
@@ -28,7 +28,9 @@ Reply with exactly ONE JSON object per turn, using one of these forms:
 Rules:
 - Paths are relative to the project root. Read a file before changing it, and copy the "old" text exactly.
 - Prefer small "replace" edits. Use "write_file" for new files or complete rewrites.
-- Edits are proposals: the user sees a diff and approves before anything is written. Never claim a change is already saved.
+- Edits, commits, pushes and pull requests are proposals: the user reviews them and approves before anything happens.
+  After approval they run in this order: write files, commit, push, open the pull request. Never claim any of it already happened.
+- "run" works on the files on disk, so it does not see your proposed edits yet.
 - Secret files (.env, keys, certificates, wp-config.php) are blocked; do not try to read them.
 - When you can answer, reply with "done": explain what you found and which files you changed and why, in the user's language.
 - You have at most {limit} tool calls."""
@@ -54,9 +56,9 @@ def _shrink_old_results(messages: list[dict]) -> None:
 
 
 def run_coder(router: Router, workspace: Workspace, system: str, task_text: str,
-              max_calls: int = MAX_TOOL_CALLS) -> CoderResult:
-    toolbox = Toolbox(workspace)
-    system = system + "\n\n" + TOOL_PROMPT.format(name=workspace.name, tools=TOOL_HELP, limit=max_calls)
+              max_calls: int = MAX_TOOL_CALLS, services: Services | None = None) -> CoderResult:
+    toolbox = Toolbox(workspace, services)
+    system = system + "\n\n" + TOOL_PROMPT.format(name=workspace.name, tools=toolbox.help(), limit=max_calls)
     overview = toolbox.run({"tool": "list_files", "path": ""})
     toolbox.trace.clear()
     messages = [

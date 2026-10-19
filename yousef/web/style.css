@@ -249,6 +249,18 @@ button { cursor: pointer; }
 .diff .hunk { color: var(--door); }
 .diff .meta { color: var(--muted); }
 
+.actions { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
+.actions li { padding: 6px 12px; border: 1px dashed var(--line); border-radius: 10px; overflow-wrap: anywhere; }
+.akind { font-weight: 600; }
+.cstatus.is-done { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.cstatus.is-failed, .cstatus.is-skipped { background: var(--danger-tint); }
+.actions a { color: var(--door); }
+.ws-item { display: block !important; }
+.ws-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.ws-head p { margin: 0; }
+.ws-more { margin-top: 6px; }
+.ws-more summary { cursor: pointer; color: var(--door); font-size: 13px; width: fit-content; }
+
 .composer-meta { max-width: var(--column); margin: 6px auto 0; display: flex; align-items: center; gap: 12px; }
 .composer-meta .hint { margin: 0; flex: 1; }
 .ws-pick { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }

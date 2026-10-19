@@ -37,6 +37,6 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     memory = Memory(root / "memory.db")
     memory.mark_interrupted()
     router = Router(settings, keystore, factory or default_factory)
-    orchestrator = Orchestrator(memory, router, settings)
+    orchestrator = Orchestrator(memory, router, settings, keystore)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
     return App(root, settings, keystore, memory, router, orchestrator, voice)

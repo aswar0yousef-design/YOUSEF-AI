@@ -13,6 +13,8 @@
     pending: "في الانتظار", running: "يعمل الآن", awaiting_approval: "ينتظر موافقتك", done: "تم", failed: "تعثّر", skipped: "تُخطّيت",
   };
   const CHANGE_STATUS = { pending: "بانتظار موافقتك", applied: "طُبّق", rejected: "مرفوض", conflict: "تعارض", error: "خطأ" };
+  const ACTION_STATUS = { pending: "بانتظار موافقتك", done: "تم", rejected: "مرفوض", failed: "تعذّر", skipped: "لم يُنفَّذ" };
+  const ACTION_NAME = { git_commit: "commit", git_push: "push", open_pr: "Pull Request" };
   const PROVIDER = { ollama: "محلي", anthropic: "Claude", openai: "OpenAI", gemini: "Gemini" };
   const ACTIVE = new Set(["planning", "running", "waiting"]);
 
@@ -106,6 +108,19 @@
       + `${c.note ? `<span class="note">${esc(c.note)}</span>` : ""}</li>`).join("")}</ul>`;
   }
 
+  function actionsHTML(step) {
+    const actions = step.actions || [];
+    if (!actions.length) return "";
+    return `<ul class="changes actions">${actions.map((a) => {
+      const p = a.payload || {};
+      let label = ACTION_NAME[a.kind] || a.kind;
+      if (a.kind === "git_commit") label = `commit: <bdi>${esc(p.message || "")}</bdi>${p.branch ? `، على فرع <bdi dir="ltr">${esc(p.branch)}</bdi>` : ""}`;
+      if (a.kind === "open_pr") label = `Pull Request: <bdi>${esc(p.title || "")}</bdi>`;
+      return `<li><span>${label}</span><span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span>`
+        + `${a.result ? `<span class="note" dir="auto">${esc(a.result)}</span>` : ""}</li>`;
+    }).join("")}</ul>`;
+  }
+
   function stepHTML(step, task, single) {
     const tag = step.provider ? `<span class="tag"><bdi dir="ltr">${esc(PROVIDER[step.provider] || step.provider)} ${esc(step.model || "")}</bdi></span>` : "";
     let h = `<li class="step is-${esc(step.status)}"><div class="step-head"><strong>${esc(AGENTS[step.agent] || step.agent)}</strong>`
@@ -118,13 +133,18 @@
         + `</ul></details>`;
     }
     const pending = (step.changes || []).filter((c) => c.status === "pending").length;
-    if (pending && step.output) h += `<div class="md explain">${md(step.output)}</div>`;
-    h += changesHTML(step);
+    const pendingActions = (step.actions || []).filter((a) => a.status === "pending");
+    if ((pending || pendingActions.length) && step.output) h += `<div class="md explain">${md(step.output)}</div>`;
+    h += changesHTML(step) + actionsHTML(step);
     if (step.status === "awaiting_approval") {
-      h += pending
-        ? `<div class="gate"><p>يقترح يوسف تعديل ${countFiles(pending)}. راجع الفروقات، ثم قرّر. لن يُكتب شيء قبل موافقتك.</p>`
-          + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">طبّق التعديلات</button>`
-          + `<button type="button" class="secondary" data-act="reject" data-step="${step.id}">ارفضها</button></div></div>`
+      const parts = [];
+      if (pending) parts.push(`تعديل ${countFiles(pending)}`);
+      if (pendingActions.length) parts.push(pendingActions.map((a) => ACTION_NAME[a.kind] || a.kind).join(" ثم "));
+      h += parts.length
+        ? `<div class="gate"><p>يقترح يوسف: ${parts.join("، ثم ")}. راجعها، ثم قرّر. لن يُنفَّذ شيء قبل موافقتك.</p>`
+          + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">${pendingActions.length ? "طبّق الكل" : "طبّق التعديلات"}</button>`
+          + (pending && pendingActions.length ? `<button type="button" class="secondary" data-act="approve-files" data-step="${step.id}">الملفات فقط</button>` : "")
+          + `<button type="button" class="secondary" data-act="reject" data-step="${step.id}">ارفض</button></div></div>`
         : `<div class="gate"><p>هذه الخطوة فيها إجراء خارج المحادثة، لذلك تنتظر موافقتك.</p>`
           + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">وافق ونفّذ</button>`
           + `<button type="button" class="secondary" data-act="reject" data-step="${step.id}">ارفض</button></div></div>`;
@@ -203,9 +223,12 @@
     if (!btn) return;
     const act = btn.dataset.act;
     const task = tasks.get(Number(btn.dataset.task));
-    if (act === "approve" || act === "reject") {
+    if (act === "approve" || act === "reject" || act === "approve-files") {
       btn.disabled = true;
-      vscode.postMessage({ type: "decide", stepId: Number(btn.dataset.step), approve: act === "approve" });
+      vscode.postMessage({
+        type: "decide", stepId: Number(btn.dataset.step), approve: act !== "reject",
+        scope: act === "approve-files" ? "files" : "all",
+      });
     } else if (act === "diff") vscode.postMessage({ type: "openDiff", changeId: Number(btn.dataset.change) });
     else if (act === "cancel") vscode.postMessage({ type: "cancel", taskId: Number(btn.dataset.task) });
     else if (act === "copy" && task) vscode.postMessage({ type: "copy", text: task.final });

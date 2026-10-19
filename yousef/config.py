@@ -20,6 +20,8 @@ TASK_TYPES = ("chat", "plan", "code", "analysis", "writing")
 ROUTE_CHOICES = ("local", "cloud", "local_only")
 MODES = ("auto", "local_only", "cloud_first")
 CLOUD_PROVIDERS = ("anthropic", "openai", "gemini")
+SERVICE_KEYS = ("github", "vercel")  # tokens for connectors, stored like API keys
+KEY_NAMES = CLOUD_PROVIDERS + SERVICE_KEYS
 
 DEFAULT_SETTINGS: dict = {
     "port": DEFAULT_PORT,
@@ -136,7 +138,20 @@ def _validate_workspaces(items) -> list:
         if name.lower() in names:
             raise SettingsError(f"workspace name used twice: {name}")
         names.add(name.lower())
-        out.append({"name": name, "path": path})
+        entry = {"name": name, "path": path}
+        commands = item.get("commands", [])
+        if isinstance(commands, str):
+            commands = [c for c in commands.splitlines()]
+        commands = [" ".join(str(c).split()) for c in commands if str(c).strip()]
+        if len(commands) > 15 or any(len(c) > 300 for c in commands):
+            raise SettingsError("allowed commands: at most 15, each under 300 characters")
+        entry["commands"] = list(dict.fromkeys(commands))
+        for key in ("vercel_project", "vercel_team"):
+            value = str(item.get(key) or "").strip()
+            if len(value) > 100:
+                raise SettingsError(f"{key} is too long")
+            entry[key] = value
+        out.append(entry)
     return out
 
 

@@ -21,6 +21,11 @@ const TOOL_LABEL = {
   git_status: "حالة git", git_diff: "فروقات git", run: "تشغيل أمر", vercel_status: "حالة Vercel",
 };
 const CHANGE_STATUS = { pending: "بانتظار موافقتك", applied: "طُبّق", rejected: "مرفوض", conflict: "تعارض", error: "خطأ" };
+const ACTION_STATUS = { pending: "بانتظار موافقتك", done: "تم", rejected: "مرفوض", failed: "تعذّر", skipped: "لم يُنفَّذ" };
+const SERVICES = [
+  ["github", "GitHub", "لفتح Pull Requests. الرفع (push) يستخدم git المثبّت عندك وصلاحياته."],
+  ["vercel", "Vercel", "للقراءة فقط: حالة النشر وأخطاء البناء. النشر نفسه يحدث عند الرفع إلى GitHub."],
+];
 const ACTIVE = new Set(["planning", "running", "waiting"]);
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -196,16 +201,24 @@ function stepHTML(step, task, hideOutput) {
       + "</ul></details>";
   }
   const changes = step.changes || [];
+  const actions = step.actions || [];
   const pendingChanges = changes.filter((c) => c.status === "pending").length;
-  if (pendingChanges && step.output) {
+  const pendingActions = actions.filter((a) => a.status === "pending");
+  if ((pendingChanges || pendingActions.length) && step.output) {
     // the agent's explanation comes before the diffs it proposes
     h += `<div class="md explain">${md(step.output)}</div>`;
   }
   if (changes.length) h += changesHTML(changes);
-  if (step.status === "awaiting_approval" && pendingChanges) {
-    h += `<div class="gate"><p>يقترح ${esc(agentName(step.agent))} تعديل ${countFiles(pendingChanges)}. راجع الفروقات، ثم قرّر. لن يُكتب شيء قبل موافقتك.</p>`
-      + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">طبّق التعديلات</button>`
-      + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفضها</button></div>`;
+  if (actions.length) h += actionsHTML(actions);
+  if (step.status === "awaiting_approval" && (pendingChanges || pendingActions.length)) {
+    const parts = [];
+    if (pendingChanges) parts.push(`تعديل ${countFiles(pendingChanges)}`);
+    const names = { git_commit: "commit", git_push: "push", open_pr: "Pull Request" };
+    if (pendingActions.length) parts.push(pendingActions.map((a) => names[a.kind] || a.kind).join(" ثم "));
+    h += `<div class="gate"><p>يقترح ${esc(agentName(step.agent))}: ${parts.join("، ثم ")}. راجعها، ثم قرّر. لن يُنفَّذ شيء قبل موافقتك.</p>`
+      + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">${pendingActions.length ? "طبّق الكل" : "طبّق التعديلات"}</button>`
+      + (pendingChanges && pendingActions.length ? `<button type="button" class="ghost" data-act="approve-files" data-step="${step.id}">الملفات فقط</button>` : "")
+      + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفض</button></div>`;
   } else if (step.status === "awaiting_approval") {
     h += `<div class="gate"><p>هذه الخطوة فيها إجراء خارج المحادثة (نشر، إرسال، دفع، حذف…)، لذلك تنتظر موافقتك.</p>`
       + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">وافق ونفّذ</button>`
@@ -247,6 +260,29 @@ function changesHTML(changes) {
       + `${c.note ? ` <span class="cnote">${esc(c.note)}</span>` : ""}</summary>`
       + `<pre class="diff" dir="ltr">${diffHTML(c.diff || "")}</pre></details>`;
   }).join("")}</div>`;
+}
+
+function actionLabel(a) {
+  const p = a.payload || {};
+  // message and branch are isolated so English text does not scramble the Arabic around it
+  if (a.kind === "git_commit") {
+    return `commit: <bdi>${esc(p.message || "")}</bdi>${p.branch ? `، على فرع <bdi dir="ltr">${esc(p.branch)}</bdi>` : ""}${p.all ? "، لكل التغييرات في المجلد" : ""}`;
+  }
+  if (a.kind === "git_push") return "push إلى origin";
+  if (a.kind === "open_pr") return `Pull Request: <bdi>${esc(p.title || "")}</bdi>`;
+  return esc(a.kind);
+}
+
+function actionsHTML(actions) {
+  return `<ul class="actions">${actions.map((a) => {
+    let result = "";
+    if (a.result) {
+      result = /^https:\/\/\S+$/.test(a.result)
+        ? ` <a href="${esc(a.result)}" target="_blank" rel="noopener noreferrer">${esc(a.result)}</a>`
+        : ` <span class="cnote" dir="auto">${esc(a.result)}</span>`;
+    }
+    return `<li><span class="akind">${actionLabel(a)}</span> <span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span>${result}</li>`;
+  }).join("")}</ul>`;
 }
 
 function footHTML(t) {
@@ -299,7 +335,7 @@ function renderTask(task) {
   }
   const sig = JSON.stringify([task.status, task.final, task.error, task.feedback,
     (task.steps || []).map((s) => [s.status, s.output, s.model, (s.trace || []).length,
-      (s.changes || []).map((c) => c.status)])]);
+      (s.changes || []).map((c) => c.status), (s.actions || []).map((a) => a.status)])]);
   if (el.dataset.sig === sig) return el;
   el.querySelectorAll("details[data-step]").forEach((d) => {
     if (d.open) state.open.add(d.dataset.step); else state.open.delete(d.dataset.step);
@@ -386,9 +422,11 @@ async function onTaskClick(e) {
   const taskId = Number(btn.dataset.task);
   const task = state.tasks.get(taskId);
   try {
-    if (act === "approve" || act === "reject") {
+    if (act === "approve" || act === "reject" || act === "approve-files") {
       btn.disabled = true;
-      await api("POST", `/api/steps/${btn.dataset.step}/decision`, { approve: act === "approve" });
+      await api("POST", `/api/steps/${btn.dataset.step}/decision`, {
+        approve: act !== "reject", scope: act === "approve-files" ? "files" : "all",
+      });
       schedulePoll();
     } else if (act === "cancel") {
       await api("POST", `/api/tasks/${taskId}/cancel`);
@@ -627,8 +665,17 @@ function renderWorkspaces() {
   }
   for (const w of state.workspaces) {
     const li = document.createElement("li");
-    li.innerHTML = `<p><strong>${esc(w.name)}</strong><br><bdi dir="ltr" class="muted">${esc(w.path)}</bdi>${w.exists ? "" : " <em>(المجلد غير موجود)</em>"}</p>`
-      + `<button type="button" class="link" data-ws="${esc(w.name)}">أزل</button>`;
+    li.className = "ws-item";
+    const id = `ws-${state.workspaces.indexOf(w)}`;
+    li.innerHTML = `<div class="ws-head"><p><strong>${esc(w.name)}</strong><br><bdi dir="ltr" class="muted">${esc(w.path)}</bdi>${w.exists ? "" : " <em>(المجلد غير موجود)</em>"}</p>`
+      + `<button type="button" class="link" data-ws="${esc(w.name)}">أزل</button></div>`
+      + `<details class="ws-more"><summary>الأوامر وVercel</summary>`
+      + `<label for="${id}-cmd">أوامر يسمح لها بتشغيلها، أمر في كل سطر</label>`
+      + `<textarea id="${id}-cmd" rows="3" dir="ltr" spellcheck="false" placeholder="npm test&#10;npm run build">${esc((w.commands || []).join("\n"))}</textarea>`
+      + `<label for="${id}-vercel">اسم المشروع في Vercel (اختياري)</label>`
+      + `<input id="${id}-vercel" dir="ltr" spellcheck="false" value="${esc(w.vercel_project || "")}">`
+      + `<button type="button" class="ghost" data-ws-save="${esc(w.name)}" data-ws-id="${id}">احفظ</button>`
+      + `<p class="status-line" role="status"></p></details>`;
     ul.appendChild(li);
   }
   fillWorkspacePicker();
@@ -641,6 +688,26 @@ async function loadWorkspaces() {
     state.workspaces = [];
   }
   renderWorkspaces();
+}
+
+function renderServices() {
+  const box = $("#services");
+  box.replaceChildren();
+  for (const [key, label, note] of SERVICES) {
+    const has = state.keys[key];
+    const div = document.createElement("div");
+    div.className = "provider";
+    div.dataset.service = key;
+    div.innerHTML = `<div class="provider-head"><strong>${label}</strong>`
+      + `<span class="key-state${has ? " has-key" : ""}">${has ? "الرمز محفوظ على هذا الجهاز" : "غير متصل"}</span></div>`
+      + `<p class="panel-note">${note}</p>`
+      + `<label for="svc-${key}">رمز الوصول (token)</label>`
+      + `<div class="row"><input id="svc-${key}" type="password" dir="ltr" autocomplete="off" spellcheck="false">`
+      + `<button type="button" class="ghost" data-svc="save">احفظ</button>`
+      + (has ? `<button type="button" class="ghost danger" data-svc="delete">احذف</button>` : "")
+      + `</div><p class="status-line" role="status"></p>`;
+    box.appendChild(div);
+  }
 }
 
 function renderLessons(lessons) {
@@ -681,6 +748,7 @@ async function openDrawer() {
     fillLocalModels(state.status.ollama.models);
     renderOllamaNote();
     renderProviders();
+    renderServices();
     renderRouting();
     renderLessons(lessons);
     renderAgents();
@@ -778,7 +846,46 @@ document.addEventListener("DOMContentLoaded", async () => {
       line.classList.add("is-error");
     }
   });
+  $("#services").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-svc]");
+    if (!btn) return;
+    const box = btn.closest("[data-service]");
+    const key = box.dataset.service;
+    const line = box.querySelector(".status-line");
+    line.classList.remove("is-error");
+    try {
+      if (btn.dataset.svc === "save") {
+        const input = box.querySelector("input");
+        if (!input.value.trim()) throw new Error("الصق الرمز أولًا.");
+        state.keys = (await api("PUT", `/api/keys/${key}`, { key: input.value })).keys;
+      } else {
+        if (!confirm("حذف هذا الرمز من الجهاز؟")) return;
+        state.keys = (await api("DELETE", `/api/keys/${key}`)).keys;
+      }
+      renderServices();
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    }
+  });
   $("#ws-list").addEventListener("click", async (e) => {
+    const save = e.target.closest("button[data-ws-save]");
+    if (save) {
+      const id = save.dataset.wsId;
+      const line = save.parentElement.querySelector(".status-line");
+      line.classList.remove("is-error");
+      try {
+        const data = await api("PUT", `/api/workspaces/${encodeURIComponent(save.dataset.wsSave)}`, {
+          commands: $(`#${id}-cmd`).value, vercel_project: $(`#${id}-vercel`).value,
+        });
+        state.workspaces = data.workspaces;
+        line.textContent = "حُفظ.";
+      } catch (err) {
+        line.textContent = err.message;
+        line.classList.add("is-error");
+      }
+      return;
+    }
     const btn = e.target.closest("button[data-ws]");
     if (!btn) return;
     try {

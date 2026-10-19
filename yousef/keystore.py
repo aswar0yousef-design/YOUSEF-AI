@@ -18,7 +18,7 @@ import sys
 import threading
 from pathlib import Path
 
-from .config import CLOUD_PROVIDERS
+from .config import KEY_NAMES
 
 _ENTROPY = b"YousefAI-keystore-v1"
 
@@ -143,7 +143,7 @@ class KeyStore:
 
     @staticmethod
     def _check_provider(provider: str) -> None:
-        if provider not in CLOUD_PROVIDERS:
+        if provider not in KEY_NAMES:
             raise KeyStoreError(f"unknown provider: {provider}")
 
     def set(self, provider: str, key: str) -> None:
@@ -179,7 +179,7 @@ class KeyStore:
                 self._save(data)
 
     def status(self) -> dict:
-        return {p: self.has(p) for p in CLOUD_PROVIDERS}
+        return {p: self.has(p) for p in KEY_NAMES}
 
     @property
     def secure(self) -> bool:

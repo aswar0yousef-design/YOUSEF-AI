@@ -66,7 +66,7 @@ class YousefClient {
   createTask(body) { return this.request("POST", "/api/tasks", body).then((r) => r.task); }
   task(id) { return this.request("GET", `/api/tasks/${id}`).then((r) => r.task); }
   cancel(id) { return this.request("POST", `/api/tasks/${id}/cancel`, {}); }
-  decide(stepId, approve) { return this.request("POST", `/api/steps/${stepId}/decision`, { approve }); }
+  decide(stepId, approve, scope = "all") { return this.request("POST", `/api/steps/${stepId}/decision`, { approve, scope }); }
   change(id) { return this.request("GET", `/api/changes/${id}`).then((r) => r.change); }
   newConversation() { return this.request("POST", "/api/conversation/new", {}); }
 }

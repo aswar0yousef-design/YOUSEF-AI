@@ -242,6 +242,7 @@ class Api:
             ("GET", r"/api/workspaces", self.list_workspaces),
             ("POST", r"/api/workspaces", self.add_workspace),
             ("DELETE", r"/api/workspaces/(.+)", self.remove_workspace),
+            ("PUT", r"/api/workspaces/(.+)", self.update_workspace),
             ("GET", r"/api/changes/(\d+)", self.get_change),
             ("GET", r"/api/voice/status", self.voice_status),
             ("POST", r"/api/voice/load", self.voice_load),
@@ -322,7 +323,10 @@ class Api:
         approve = body.get("approve")
         if not isinstance(approve, bool):
             raise ApiError(400, "approve must be true or false")
-        if not self.app.orchestrator.decide(_int(step_id), approve):
+        scope = body.get("scope", "all")
+        if scope not in ("all", "files"):
+            raise ApiError(400, "scope must be all or files")
+        if not self.app.orchestrator.decide(_int(step_id), approve, scope):
             raise ApiError(409, "هذه الخطوة لا تنتظر موافقة")
         return 200, {"ok": True}
 
@@ -417,6 +421,15 @@ class Api:
         except WorkspaceError as e:
             raise ApiError(400, str(e)) from None
         return 201, {"workspace": entry, "workspaces": registry.list_workspaces(self.app.settings)}
+
+    def update_workspace(self, name, query, body):
+        try:
+            entry = registry.update(self.app.settings, unquote(name), body)
+        except WorkspaceError as e:
+            raise ApiError(404, str(e)) from None
+        except SettingsError as e:
+            raise ApiError(400, str(e)) from None
+        return 200, {"workspace": entry, "workspaces": registry.list_workspaces(self.app.settings)}
 
     def remove_workspace(self, name, query, body):
         if not registry.remove(self.app.settings, unquote(name)):

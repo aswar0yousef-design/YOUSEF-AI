@@ -74,6 +74,17 @@ CREATE TABLE IF NOT EXISTS changes(
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS changes_step ON changes(step_id);
+CREATE TABLE IF NOT EXISTS actions(
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL,
+    step_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    result TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS actions_step ON actions(step_id);
 """
 
 ACTIVE_STATUSES = ("planning", "running", "waiting")
@@ -83,6 +94,7 @@ LESSON_KINDS = ("rule", "success", "failure")
 _TASK_FIELDS = {"status", "final", "error", "feedback"}
 _STEP_FIELDS = {"status", "output", "provider", "model", "error", "started_at", "finished_at", "trace"}
 CHANGE_STATUSES = ("pending", "applied", "rejected", "conflict", "error")
+ACTION_STATUSES = ("pending", "done", "rejected", "failed", "skipped")
 
 _DIACRITICS = re.compile(r"[ً-ْـ]")
 _TOKEN = re.compile(r"\w{3,}")
@@ -174,6 +186,9 @@ class Memory:
                 "SELECT id, step_id, path, old_text IS NULL AS new_file, diff, added, removed, status, note "
                 "FROM changes WHERE task_id = ? ORDER BY id", (task_id,)
             ).fetchall()
+            actions = self._db.execute(
+                "SELECT id, step_id, kind, payload, status, result FROM actions WHERE task_id = ? ORDER BY id",
+                (task_id,)).fetchall()
         task = dict(row)
         task["context"] = _loads(task.get("context"))
         by_step: dict[int, list] = {}
@@ -181,15 +196,21 @@ class Memory:
             d = dict(c)
             d["new_file"] = bool(d["new_file"])
             by_step.setdefault(d.pop("step_id"), []).append(d)
-        task["steps"] = [self._step_dict(s, by_step.get(s["id"], [])) for s in steps]
+        acts: dict[int, list] = {}
+        for a in actions:
+            d = dict(a)
+            d["payload"] = _loads(d["payload"]) or {}
+            acts.setdefault(d.pop("step_id"), []).append(d)
+        task["steps"] = [self._step_dict(s, by_step.get(s["id"], []), acts.get(s["id"], [])) for s in steps]
         return task
 
     @staticmethod
-    def _step_dict(row, changes: list | None = None) -> dict:
+    def _step_dict(row, changes: list | None = None, actions: list | None = None) -> dict:
         d = dict(row)
         d["needs_confirmation"] = bool(d["needs_confirmation"])
         d["trace"] = _loads(d.get("trace")) or []
         d["changes"] = changes or []
+        d["actions"] = actions or []
         return d
 
     def list_tasks(self, limit: int = 50, since: float | None = None) -> list[dict]:
@@ -280,6 +301,37 @@ class Memory:
         with self._lock:
             row = self._db.execute("SELECT * FROM changes WHERE id = ?", (change_id,)).fetchone()
         return dict(row) if row else None
+
+    def add_actions(self, task_id: int, step_id: int, actions: list[dict]) -> list[int]:
+        ids = []
+        with self._lock:
+            for a in actions:
+                cur = self._db.execute(
+                    "INSERT INTO actions(task_id, step_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (task_id, step_id, a["kind"], json.dumps(a["payload"], ensure_ascii=False), time.time()))
+                ids.append(int(cur.lastrowid))
+            self._db.commit()
+        return ids
+
+    def get_actions(self, step_id: int, status: str | None = None) -> list[dict]:
+        query, args = "SELECT * FROM actions WHERE step_id = ?", (step_id,)
+        if status:
+            query, args = query + " AND status = ?", (step_id, status)
+        with self._lock:
+            rows = self._db.execute(query + " ORDER BY id", args).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["payload"] = _loads(d["payload"]) or {}
+            out.append(d)
+        return out
+
+    def update_action(self, action_id: int, status: str, result: str = "") -> None:
+        if status not in ACTION_STATUSES:
+            raise ValueError(f"status must be one of {ACTION_STATUSES}")
+        with self._lock:
+            self._db.execute("UPDATE actions SET status = ?, result = ? WHERE id = ?", (status, result or None, action_id))
+            self._db.commit()
 
     def update_change(self, change_id: int, status: str, note: str = "") -> None:
         if status not in CHANGE_STATUSES:
