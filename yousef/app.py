@@ -11,6 +11,7 @@ from .keystore import KeyStore
 from .memory import Memory
 from .models import Router
 from .models.router import default_factory
+from .voice import VoiceEngine
 
 
 @dataclass
@@ -21,13 +22,14 @@ class App:
     memory: Memory
     router: Router
     orchestrator: Orchestrator
+    voice: VoiceEngine
 
     def close(self) -> None:
         self.orchestrator.shutdown()
         self.memory.close()
 
 
-def build_app(data_dir: Path | None = None, factory=None, cipher=None) -> App:
+def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_backend=None) -> App:
     root = Path(data_dir) if data_dir else default_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     settings = Settings(root / "settings.json")
@@ -36,4 +38,5 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None) -> App:
     memory.mark_interrupted()
     router = Router(settings, keystore, factory or default_factory)
     orchestrator = Orchestrator(memory, router, settings)
-    return App(root, settings, keystore, memory, router, orchestrator)
+    voice = VoiceEngine(settings, root, backend_factory=voice_backend)
+    return App(root, settings, keystore, memory, router, orchestrator, voice)

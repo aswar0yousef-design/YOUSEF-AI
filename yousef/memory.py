@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 """
 
 ACTIVE_STATUSES = ("planning", "running", "waiting")
+TASK_SOURCES = ("text", "voice")
 LESSON_KINDS = ("rule", "success", "failure")
 
 _TASK_FIELDS = {"status", "final", "error", "feedback"}
@@ -97,19 +98,28 @@ class Memory:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA foreign_keys=ON")
             self._db.executescript(SCHEMA)
+            self._migrate()
             self._db.commit()
+
+    def _migrate(self) -> None:
+        """Upgrade databases created by older versions."""
+        columns = {r["name"] for r in self._db.execute("PRAGMA table_info(tasks)").fetchall()}
+        if "source" not in columns:  # added in 0.2.0: "text" or "voice"
+            self._db.execute("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'text'")
 
     def close(self) -> None:
         with self._lock:
             self._db.close()
 
     # ---- tasks -------------------------------------------------------------
-    def create_task(self, request: str) -> int:
+    def create_task(self, request: str, source: str = "text") -> int:
+        if source not in TASK_SOURCES:
+            raise ValueError(f"source must be one of {TASK_SOURCES}")
         now = time.time()
         with self._lock:
             cur = self._db.execute(
-                "INSERT INTO tasks(request, status, created_at, updated_at) VALUES (?, 'planning', ?, ?)",
-                (request, now, now),
+                "INSERT INTO tasks(request, status, source, created_at, updated_at) VALUES (?, 'planning', ?, ?, ?)",
+                (request, source, now, now),
             )
             self._db.commit()
             return int(cur.lastrowid)

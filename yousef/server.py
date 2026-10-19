@@ -26,6 +26,7 @@ from .config import CLOUD_PROVIDERS, SettingsError
 from .core import AGENTS
 from .keystore import KeyStoreError
 from .models import ProviderError
+from .voice import AudioError, VoiceNotInstalled, VoiceNotReady
 
 log = logging.getLogger("yousef.server")
 
@@ -39,6 +40,8 @@ STATIC_FILES = {
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 MAX_BODY = 1_000_000
+MAX_AUDIO = 4_000_000  # about two minutes of 16 kHz mono audio
+AUDIO_ROUTES = {"/api/voice/transcribe"}
 
 
 class ApiError(Exception):
@@ -96,7 +99,10 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
                     raise ApiError(404, "not found")
                 if method != "GET":
                     self._check_write_request()
-                body = self._read_json() if method in ("POST", "PUT") else {}
+                if method == "POST" and parsed.path in AUDIO_ROUTES:
+                    body = {"audio": self._read_audio()}
+                else:
+                    body = self._read_json() if method in ("POST", "PUT") else {}
                 status, payload = api.dispatch(method, parsed.path, parse_qs(parsed.query), body)
                 self._json(status, payload)
             except ApiError as e:
@@ -144,6 +150,16 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
             if not isinstance(data, dict):
                 raise ApiError(400, "expected a JSON object")
             return data
+
+        def _read_audio(self) -> bytes:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_AUDIO:
+                raise ApiError(413, "المقطع الصوتي أطول من المسموح")
+            if not (self.headers.get("Content-Type") or "").startswith("audio/wav"):
+                raise ApiError(415, "expected audio/wav")
+            if length == 0:
+                raise ApiError(400, "empty audio")
+            return self.rfile.read(length)
 
         def _send(self, status: int, body: bytes, content_type: str, extra: dict | None = None):
             self.send_response(status)
@@ -197,6 +213,9 @@ class Api:
             ("GET", r"/api/lessons", self.list_lessons),
             ("POST", r"/api/lessons", self.add_lesson),
             ("DELETE", r"/api/lessons/(\d+)", self.delete_lesson),
+            ("GET", r"/api/voice/status", self.voice_status),
+            ("POST", r"/api/voice/load", self.voice_load),
+            ("POST", r"/api/voice/transcribe", self.voice_transcribe),
         ]
 
     def dispatch(self, method: str, path: str, query: dict, body: dict):
@@ -234,8 +253,11 @@ class Api:
         return 200, {"tasks": self.app.memory.list_tasks(limit=limit)}
 
     def create_task(self, query, body):
+        source = body.get("source", "text")
+        if source not in ("text", "voice"):
+            raise ApiError(400, "source must be text or voice")
         try:
-            task_id = self.app.orchestrator.submit(str(body.get("request", "")))
+            task_id = self.app.orchestrator.submit(str(body.get("request", "")), source)
         except ValueError as e:
             raise ApiError(400, str(e)) from None
         return 201, {"task": self.app.memory.get_task(task_id)}
@@ -327,3 +349,23 @@ class Api:
         if not self.app.memory.delete_lesson(_int(lesson_id)):
             raise ApiError(404, "lesson not found")
         return 200, {"lessons": self.app.memory.list_lessons()}
+
+    # ---- voice -----------------------------------------------------------------
+    def voice_status(self, query, body):
+        return 200, self.app.voice.status()
+
+    def voice_load(self, query, body):
+        try:
+            return 200, self.app.voice.load()
+        except VoiceNotInstalled:
+            raise ApiError(501, "الصوت غير مثبّت. شغّل install-voice.bat مرة واحدة ثم أعد تشغيل يوسف.") from None
+
+    def voice_transcribe(self, query, body):
+        try:
+            return 200, self.app.voice.transcribe(body["audio"])
+        except AudioError as e:
+            raise ApiError(400, f"ملف صوتي غير صالح: {e}") from None
+        except VoiceNotInstalled:
+            raise ApiError(501, "الصوت غير مثبّت. شغّل install-voice.bat مرة واحدة ثم أعد تشغيل يوسف.") from None
+        except VoiceNotReady as e:
+            raise ApiError(503, str(e)) from None

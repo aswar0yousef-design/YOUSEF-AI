@@ -40,7 +40,19 @@ DEFAULT_SETTINGS: dict = {
     },
     # how many previous user/assistant turns are given to the agents as context
     "history_turns": 4,
+    # local speech-to-text (faster-whisper); spoken replies are set in the browser
+    "voice": {
+        "model": "small",
+        "device": "cpu",
+        "language": "auto",
+        "wake_words": ["يوسف", "يا يوسف", "Yousef", "Youssef", "Yusuf"],
+        "preload": True,
+    },
 }
+
+VOICE_MODELS = ("tiny", "base", "small", "medium", "large-v3-turbo")
+VOICE_DEVICES = ("cpu", "cuda")
+VOICE_LANGUAGES = ("auto", "ar", "en")
 
 
 def data_dir() -> Path:
@@ -98,7 +110,30 @@ def _validate(merged: dict) -> dict:
     turns = s.get("history_turns")
     if not isinstance(turns, int) or not 0 <= turns <= 20:
         raise SettingsError("history_turns must be between 0 and 20")
+    s["voice"] = _validate_voice(s.get("voice"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
+
+
+def _validate_voice(voice) -> dict:
+    if not isinstance(voice, dict):
+        raise SettingsError("voice must be an object")
+    v = {k: voice.get(k, DEFAULT_SETTINGS["voice"][k]) for k in DEFAULT_SETTINGS["voice"]}
+    if v["model"] not in VOICE_MODELS:
+        raise SettingsError(f"voice.model must be one of {VOICE_MODELS}")
+    if v["device"] not in VOICE_DEVICES:
+        raise SettingsError(f"voice.device must be one of {VOICE_DEVICES}")
+    if v["language"] not in VOICE_LANGUAGES:
+        raise SettingsError(f"voice.language must be one of {VOICE_LANGUAGES}")
+    words = v["wake_words"]
+    if isinstance(words, str):
+        words = [w for w in (p.strip() for p in words.replace("،", ",").split(",")) if w]
+    if (not isinstance(words, list) or not 1 <= len(words) <= 10
+            or not all(isinstance(w, str) and 2 <= len(w.strip()) <= 30 for w in words)):
+        raise SettingsError("voice.wake_words must list 1-10 words of 2-30 letters")
+    v["wake_words"] = list(dict.fromkeys(w.strip() for w in words))
+    if not isinstance(v["preload"], bool):
+        raise SettingsError("voice.preload must be true or false")
+    return v
 
 
 class Settings:

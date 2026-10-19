@@ -63,7 +63,15 @@ def main(argv=None) -> int:
     print(f"  Data:      {app.data_dir}")
     if not app.keystore.secure:
         print("  Note: API keys are only base64-encoded on this OS (DPAPI encryption is Windows-only).")
-    print("  Close this window or press Ctrl+C to stop.\n")
+    print("  Close this window or press Ctrl+C to stop.")
+
+    if app.voice.installed:
+        if app.settings.get()["voice"]["preload"]:
+            app.voice.load()
+            print("  Voice: loading the speech model in the background.")
+    else:
+        print("  Voice: not installed (run install-voice.bat once to enable it).")
+    print()
 
     if not args.no_browser:
         threading.Timer(0.8, webbrowser.open, [url]).start()

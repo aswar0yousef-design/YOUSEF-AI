@@ -44,6 +44,10 @@ Rules:
 Answer with JSON only, in this exact shape:
 {{"steps": [{{"agent": "general", "instruction": "...", "needs_confirmation": false}}]}}"""
 
+VOICE_HINT = """The user is talking to you by voice and will hear your answer read aloud.
+Open with a short spoken answer: 2 to 4 plain sentences, no markdown, no lists, no symbols.
+If the request needs long content (code, tables, posts, plans), put it after that opening; it will be shown on screen."""
+
 COMPOSE_PROMPT = """Several agents worked on the user's request in steps. Write the final answer for the user from their results.
 - Keep everything the user needs complete: code, posts, drafts, tables. Do not shorten them.
 - Remove repetition between steps and fix contradictions.
@@ -119,15 +123,16 @@ class Orchestrator:
         self._shutdown = threading.Event()
 
     # ---- public API ----------------------------------------------------------
-    def submit(self, request: str) -> int:
+    def submit(self, request: str, source: str = "text") -> int:
         request = (request or "").strip()
         if not request:
             raise ValueError("الطلب فارغ")
         if len(request) > MAX_REQUEST:
             raise ValueError(f"الطلب أطول من {MAX_REQUEST} حرف")
-        task_id = self.memory.create_task(request)
+        task_id = self.memory.create_task(request, source)
         self.memory.add_message("user", request, task_id)
-        thread = threading.Thread(target=self._run_safe, args=(task_id, request), name=f"task-{task_id}", daemon=True)
+        thread = threading.Thread(target=self._run_safe, args=(task_id, request, source == "voice"),
+                                  name=f"task-{task_id}", daemon=True)
         with self._lock:
             self._threads[task_id] = thread
         thread.start()
@@ -188,9 +193,9 @@ class Orchestrator:
         with self._lock:
             return task_id in self._cancelled
 
-    def _run_safe(self, task_id: int, request: str) -> None:
+    def _run_safe(self, task_id: int, request: str, voice: bool = False) -> None:
         try:
-            self._run(task_id, request)
+            self._run(task_id, request, voice)
         except Exception as e:  # never leave a task stuck in "running"
             log.exception("task %s crashed", task_id)
             self.memory.update_task(task_id, status="failed", error=f"خطأ داخلي: {e}")
@@ -199,7 +204,7 @@ class Orchestrator:
                 self._threads.pop(task_id, None)
                 self._cancelled.discard(task_id)
 
-    def _run(self, task_id: int, request: str) -> None:
+    def _run(self, task_id: int, request: str, voice: bool = False) -> None:
         s = self.settings.get()
         history = self.memory.recent_turns(s["history_turns"], exclude_task=task_id)
         lessons = self.memory.relevant_lessons(request)
@@ -229,8 +234,9 @@ class Orchestrator:
             agent = get_agent(step["agent"])
             self.memory.update_step(step_id, status="running", started_at=time.time())
             try:
+                speak = voice and len(plan) == 1  # this step's output is the final answer
                 completion = self.router.complete(
-                    agent.task_type, self._agent_messages(agent, step, request, history, results, lessons)
+                    agent.task_type, self._agent_messages(agent, step, request, history, results, lessons, speak)
                 )
             except NoModelError as e:
                 self.memory.update_step(step_id, status="failed", error=str(e), finished_at=time.time())
@@ -244,7 +250,7 @@ class Orchestrator:
         if self._is_cancelled(task_id):
             self._stop(task_id, step_ids)
             return
-        final = self._compose(request, results, lessons)
+        final = self._compose(request, results, lessons, voice)
         self.memory.update_task(task_id, status="done", final=final)
         self.memory.add_message("assistant", final, task_id)
 
@@ -277,11 +283,13 @@ class Orchestrator:
                      "needs_confirmation": requires_approval(request, False)}]
 
     def _agent_messages(self, agent, step: dict, request: str, history: list[dict],
-                        results: list[tuple[dict, str]], lessons: list[dict]) -> list[dict]:
+                        results: list[tuple[dict, str]], lessons: list[dict], speak: bool = False) -> list[dict]:
         rules, outcomes = _lessons_text(lessons)
         system = agent.system_prompt(rules)
         if outcomes:
             system += "\n\n" + outcomes
+        if speak:
+            system += "\n\n" + VOICE_HINT
         messages = [{"role": "system", "content": system}]
         messages.extend(history)
         if not results and step["instruction"].strip() == request.strip():
@@ -295,7 +303,8 @@ class Orchestrator:
         messages.append({"role": "user", "content": "\n\n".join(parts)})
         return messages
 
-    def _compose(self, request: str, results: list[tuple[dict, str]], lessons: list[dict]) -> str:
+    def _compose(self, request: str, results: list[tuple[dict, str]], lessons: list[dict],
+                 voice: bool = False) -> str:
         if not results:
             return "لم تُنفَّذ أي خطوة."
         if len(results) == 1:
@@ -303,6 +312,8 @@ class Orchestrator:
         fallback = "\n\n".join(f"### {AGENTS[s['agent']].name}\n{text}" for s, text in results)
         rules, _ = _lessons_text(lessons)
         system = AGENTS["general"].system_prompt(rules) + "\n\n" + COMPOSE_PROMPT
+        if voice:
+            system += "\n\n" + VOICE_HINT
         body = "\n\n".join(f"Step result ({AGENTS[s['agent']].name}):\n{t[:STEP_RESULT_LIMIT]}" for s, t in results)
         messages = [
             {"role": "system", "content": system},

@@ -1,8 +1,9 @@
 """YOUSEF AI — personal multi-agent assistant for Windows.
 
-Phase 1 core: orchestrator, model router, memory, local key storage, dashboard.
-Uses only the Python standard library so it runs with a plain Python install.
+Core (orchestrator, model router, memory, key storage, dashboard) uses only the
+Python standard library. Voice is optional and needs faster-whisper
+(install-voice.bat).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 APP_TITLE = "YOUSEF AI"
