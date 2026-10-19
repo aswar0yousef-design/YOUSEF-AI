@@ -6,6 +6,7 @@ third-party SDKs to install or keep in sync.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import urllib.parse
@@ -28,6 +29,49 @@ def explain_crash(model: str, error: Exception) -> str:
             "كرت الشاشة، لا في يوسف. جرّب بالترتيب: أغلق Ollama من أيقونته بجانب الساعة وافتحه من جديد؛ حدّث Ollama "
             f"من ollama.com وتعريف NVIDIA؛ ثم جرّب في الطرفية: ollama run {model} \"مرحبا\". وإن لم يعمل هناك أيضًا "
             f"فاختر نموذجًا آخر مثل qwen2.5:7b. (الخطأ: {str(error)[:160]})")
+
+
+def native_call(message: dict) -> str | None:
+    """gpt-oss sometimes answers with its own built-in tool call (Ollama returns it in message.tool_calls,
+    with empty content) instead of the JSON text it was asked for. Turn it into that JSON text."""
+    calls = message.get("tool_calls") or []
+    if not calls:
+        return None
+    fn = (calls[0] or {}).get("function") or {}
+    name = str(fn.get("name") or "").split(".")[-1].strip()
+    args = fn.get("arguments") or {}
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    if "tool" in args or "done" in args:
+        return json.dumps(args, ensure_ascii=False)
+    if name in ("done", "finish", "final", "final_answer", "answer"):
+        text = next((str(v) for k, v in args.items() if k in ("done", "text", "answer", "message", "summary")), "")
+        return json.dumps({"done": text or json.dumps(args, ensure_ascii=False)}, ensure_ascii=False)
+    if not name:
+        return None
+    return json.dumps(dict({"tool": name}, **args), ensure_ascii=False)
+
+
+def json_in_reasoning(thinking: str) -> str | None:
+    """Last resort: the action the model settled on in its reasoning (the last {"tool"...} or {"done"...})."""
+    decoder = json.JSONDecoder()
+    found = None
+    start = thinking.find("{")
+    while start != -1:
+        try:
+            value, end = decoder.raw_decode(thinking, start)
+        except ValueError:
+            start = thinking.find("{", start + 1)
+            continue
+        if isinstance(value, dict) and ("tool" in value or "done" in value):
+            found = value
+        start = thinking.find("{", end)
+    return json.dumps(found, ensure_ascii=False) if found else None
 
 
 def _crashed(error: Exception) -> bool:
@@ -136,11 +180,23 @@ class OllamaProvider(Provider):
                                    json_format=not reasoning)
         if content.strip():
             return content
-        thinking = (data.get("message") or {}).get("thinking") or ""
+        message = data.get("message") or {}
+        native = native_call(message)
+        if native:
+            log.info("%s answered with its built-in tool call; using it as %s", model, native[:120])
+            return native
+        thinking = message.get("thinking") or ""
         log.warning("%s gave an empty JSON answer (done_reason=%s, reasoning %d chars); asking again in words",
                     model, data.get("done_reason"), len(thinking))
         content, data = self._call(model, _with_instruction(messages, JSON_ONLY), json_format=False)
-        if not content.strip() and data.get("done_reason") == "length":
+        if content.strip():
+            return content
+        message = data.get("message") or {}
+        rescued = native_call(message) or json_in_reasoning((message.get("thinking") or "") + "\n" + thinking)
+        if rescued:
+            log.warning("%s: empty answer again; using the action from its reasoning: %s", model, rescued[:120])
+            return rescued
+        if data.get("done_reason") == "length":
             raise ProviderError(f"{model} ran out of context (num_ctx {self.num_ctx}); raise it in settings")
         return content
 

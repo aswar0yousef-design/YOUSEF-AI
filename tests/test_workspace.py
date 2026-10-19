@@ -218,6 +218,16 @@ class CoderLoopTest(unittest.TestCase):
         retry = script.coder_calls[1][-1]["content"]
         self.assertIn('{"tool": "list_files"', retry)  # the reminder shows a real tool call
 
+    def test_old_results_fit_a_small_context(self):
+        from yousef.core.toolloop import _shrink_old_results
+        msgs = [{"role": "system", "content": "s"}]
+        for n in range(5):
+            msgs.append({"role": "assistant", "content": "{}"})
+            msgs.append({"role": "user", "content": f"Result of t{n}:\n" + "x" * 5000})
+        _shrink_old_results(msgs)
+        sizes = [len(m["content"]) for m in msgs if m["content"].startswith("Result of")]
+        self.assertEqual([s > 5000 for s in sizes], [False, False, False, True, True])  # newest two fit in 12000
+
     def test_tool_limit(self):
         turns = [json.dumps({"tool": "list_files", "path": ""})] * 5 + [json.dumps({"done": "stopped"})]
         res = run_coder(self.router(Scripted(turns)), Workspace("proj", self.root), "SYSTEM tool calls", "x",

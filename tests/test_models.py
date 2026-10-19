@@ -196,6 +196,13 @@ class ReasoningModelTest(unittest.TestCase):
                 status = 200
                 if reason == "crash":
                     status, data = 500, json.dumps({"error": content}).encode()
+                elif reason == "native":  # gpt-oss's own tool call, empty content
+                    data = json.dumps({"message": {"role": "assistant", "content": "", "thinking": "...",
+                                                   "tool_calls": [{"function": json.loads(content)}]},
+                                       "done": True, "done_reason": "stop"}).encode()
+                elif reason == "thinking":  # empty answer, the action only in the reasoning
+                    data = json.dumps({"message": {"role": "assistant", "content": "", "thinking": content},
+                                       "done": True, "done_reason": "stop"}).encode()
                 else:
                     data = json.dumps({"message": {"role": "assistant", "content": content, "thinking": "..."},
                                        "done": True, "done_reason": reason}).encode()
@@ -271,6 +278,17 @@ class ReasoningModelTest(unittest.TestCase):
         self.replies = [('json: unknown field "think"', "crash"), ("ok", "stop")]
         self.assertEqual(self.provider.chat("gpt-oss:20b", msgs), "ok")  # an older Ollama without reasoning levels
         self.assertNotIn("think", self.requests[-1])
+
+    def test_builtin_tool_call_and_reasoning_rescue(self):
+        msgs = [{"role": "system", "content": "tools"}, {"role": "user", "content": "go"}]
+        self.replies = [(json.dumps({"name": "functions.list_products", "arguments": {"limit": 5}}), "native")]
+        self.assertEqual(json.loads(self.provider.chat("gpt-oss:20b", msgs, json_mode=True)),
+                         {"tool": "list_products", "limit": 5})
+        self.assertEqual(len(self.requests), 1)  # no second request needed
+        self.replies = [("", "stop"), ('I could use {"tool": "list_products"}... no: {"tool": "sales_summary", "days": 30}',
+                                       "thinking")]
+        self.assertEqual(json.loads(self.provider.chat("gpt-oss:20b", msgs, json_mode=True)),
+                         {"tool": "sales_summary", "days": 30})
 
     def test_speech_gives_the_card_back_first(self):
         freed = []

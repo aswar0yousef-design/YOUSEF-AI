@@ -21,7 +21,8 @@ from .jsonutil import extract_json
 log = logging.getLogger("yousef.toolloop")
 
 MAX_TOOL_CALLS = 16
-KEEP_FULL_RESULTS = 5
+KEEP_FULL_RESULTS = 4
+RESULTS_BUDGET = 12000  # characters of tool results kept in full (the newest one always is)
 
 
 @dataclass
@@ -35,10 +36,18 @@ class LoopResult:
 
 
 def _shrink_old_results(messages: list[dict]) -> None:
-    """Keep the newest tool results in full; older ones become one-line stubs."""
+    """Keep the newest tool results in full; older ones become short stubs.
+
+    A local model often has an 8K-token context, so besides a count there is a size budget: three long
+    product lists in full would push the instructions out of what the model can see."""
     results = [i for i, m in enumerate(messages) if m["role"] == "user" and m["content"].startswith("Result of ")]
-    for i in results[:-KEEP_FULL_RESULTS]:
+    kept, used = 0, 0
+    for i in reversed(results):
         content = messages[i]["content"]
+        if kept == 0 or (kept < KEEP_FULL_RESULTS and used + len(content) <= RESULTS_BUDGET):
+            kept += 1
+            used += len(content)
+            continue
         if len(content) > 400:
             messages[i] = {"role": "user", "content": content[:300] + "\n... (older result shortened)"}
 
