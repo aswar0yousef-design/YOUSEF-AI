@@ -243,6 +243,12 @@ function schedulePoll() {
   if (!state.pollTimer) state.pollTimer = setTimeout(poll, 900);
 }
 
+function notifyTask(task, prev) {
+  for (const hook of window.Yousef.taskHooks) {
+    try { hook(task, prev); } catch (e) { console.error(e); }
+  }
+}
+
 async function poll() {
   state.pollTimer = null;
   const active = [...state.tasks.values()].filter((t) => ACTIVE.has(t.status));
@@ -250,7 +256,9 @@ async function poll() {
     try {
       const stick = nearBottom();
       const { task } = await api("GET", `/api/tasks/${t.id}`);
+      const prev = state.tasks.get(task.id);
       renderTask(task);
+      notifyTask(task, prev);
       if (stick) window.scrollTo({ top: document.body.scrollHeight });
     } catch (e) {
       showHint(e.message, true);
@@ -259,19 +267,24 @@ async function poll() {
   if ([...state.tasks.values()].some((t) => ACTIVE.has(t.status))) schedulePoll();
 }
 
-async function submit(text) {
+async function submit(text, source = "text") {
   text = text.trim();
-  if (!text) { showHint("اكتب طلبك أولًا.", true); els.input.focus(); return; }
+  if (!text) { showHint("اكتب طلبك أولًا.", true); els.input.focus(); return null; }
   els.send.disabled = true;
   try {
-    const { task } = await api("POST", "/api/tasks", { request: text });
-    els.input.value = "";
-    autosize();
+    const { task } = await api("POST", "/api/tasks", { request: text, source });
+    if (source === "text") {
+      els.input.value = "";
+      autosize();
+    }
     const el = renderTask(task);
+    notifyTask(task, null);
     el.scrollIntoView({ block: "start" });
     schedulePoll();
+    return task;
   } catch (e) {
     showHint(e.message, true);
+    return null;
   } finally {
     els.send.disabled = false;
   }
@@ -563,6 +576,9 @@ async function openDrawer() {
     renderAgents();
     $("#settings-status").textContent = "";
     $("#about").textContent = `الإصدار ${state.status.version}. بياناتك محفوظة على هذا الجهاز في: ${state.status.data_dir}`;
+    for (const hook of window.Yousef.drawerHooks) {
+      try { await hook(); } catch (e) { console.error(e); }
+    }
   } catch (e) {
     showHint(e.message, true);
     return;
@@ -587,6 +603,11 @@ function autosize() {
   els.input.style.height = `${Math.min(els.input.scrollHeight, 220)}px`;
 }
 
+// Shared with voice.js
+window.Yousef = {
+  api, state, submit, showHint, poll: () => schedulePoll(), taskHooks: [], drawerHooks: [],
+};
+
 // ---------------------------------------------------------------- boot
 document.addEventListener("DOMContentLoaded", async () => {
   Object.assign(els, {
@@ -595,6 +616,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     drawer: $("#drawer"), scrim: $("#scrim"), btnSettings: $("#btn-settings"),
   });
 
+  if (window.matchMedia("(max-width: 640px)").matches) els.input.placeholder = "اكتب طلبك…";
   $("#composer").addEventListener("submit", (e) => { e.preventDefault(); submit(els.input.value); });
   els.input.addEventListener("input", autosize);
   els.input.addEventListener("keydown", (e) => {

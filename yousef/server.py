@@ -36,6 +36,8 @@ STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
+    "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
+    "/voice-worklet.js": ("voice-worklet.js", "text/javascript; charset=utf-8"),
 }
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
