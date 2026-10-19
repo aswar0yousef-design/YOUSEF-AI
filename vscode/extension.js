@@ -315,7 +315,7 @@ function activate(ext) {
     status.tooltip = online ? "افتح يوسف" : "يوسف غير متصل؛ شغّل start.bat";
   };
 
-  const ask = async (preset, { includeFile = false, prompt = false } = {}) => {
+  const ask = async (preset, { includeFile = false, prompt = false, attach = true } = {}) => {
     let text = preset;
     if (prompt) {
       text = await vscode.window.showInputBox({
@@ -326,7 +326,7 @@ function activate(ext) {
       if (!text) return;
     }
     try {
-      await chat.send(text, { attach: true, includeFile });
+      await chat.send(text, { attach, includeFile });
     } catch (err) {
       chat.showError(err);
       vscode.window.showErrorMessage(err.message || String(err));
@@ -341,6 +341,9 @@ function activate(ext) {
     vscode.commands.registerCommand("yousef.ask", () => ask("اشرح هذا الكود", { prompt: true })),
     vscode.commands.registerCommand("yousef.explain", () => ask("اشرح هذا الكود: ماذا يفعل، وما نقاط ضعفه؟", { includeFile: true })),
     vscode.commands.registerCommand("yousef.fix", () => ask("ابحث عن الأخطاء في هذا الكود وأصلحها، واشرح السبب باختصار.", { includeFile: true })),
+    vscode.commands.registerCommand("yousef.audit", () => ask(
+      "افحص هذا المشروع فحصًا تقنيًا: الثغرات الأمنية، والمفاتيح أو كلمات المرور المكتوبة في الكود، والحزم ذات الثغرات المعروفة، والأخطاء الواضحة. "
+      + "أكّد كل مشكلة بقراءة الكود، واقترح الإصلاحات، ورتّب التقرير حسب الخطورة.", { attach: false })),
     vscode.commands.registerCommand("yousef.openDashboard", () => vscode.env.openExternal(vscode.Uri.parse(serverUrl()))),
     vscode.commands.registerCommand("yousef.newConversation", () => chat.newConversation().catch((e) => chat.showError(e))),
     vscode.commands.registerCommand("yousef.allowWorkspace", async () => {

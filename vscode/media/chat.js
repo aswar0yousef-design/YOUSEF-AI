@@ -6,6 +6,22 @@
 
   const AGENTS = {
     general: "المساعد العام", coder: "المبرمج", writer: "صانع المحتوى", analyst: "المحلل", store_manager: "مدير المتاجر",
+    tech_manager: "المدير التقني",
+  };
+  const TOOL_LABEL = {
+    list_files: "عرض مجلد", read_file: "قراءة", search: "بحث", replace: "تعديل مقترح", write_file: "ملف مقترح",
+    git_status: "حالة git", git_diff: "فروقات git", run: "تشغيل أمر", vercel_status: "حالة Vercel",
+    git_commit: "commit مقترح", git_push: "push مقترح", open_pr: "Pull Request مقترح",
+    list_stores: "عرض المتاجر", store_info: "معلومات المتجر", list_products: "عرض المنتجات", get_product: "قراءة منتج",
+    list_orders: "عرض الطلبات", sales_summary: "ملخص المبيعات", propose_product: "منتج مقترح", propose_update: "تعديل مقترح",
+    list_discounts: "عرض العروض", propose_discount: "عرض مقترح", propose_end_discount: "إيقاف عرض مقترح",
+    propose_bundle: "باقة مقترحة", site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود",
+    check_dependencies: "فحص الحزم",
+  };
+  const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
+  const PROPOSAL_KIND = {
+    store_create_product: "منتج جديد", store_update_product: "تعديل", store_create_discount: "عرض جديد",
+    store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة",
   };
   const TASK_STATE = {
     planning: "يخطّط…", running: "يعمل…", waiting: "ينتظر موافقتك", failed: "تعثّرت المهمة",
@@ -21,6 +37,7 @@
   const FIELD_LABEL = {
     title: "العنوان", description: "الوصف", price: "السعر", compare_at_price: "السعر قبل الخصم",
     sale_price: "سعر التخفيض", sku: "SKU", status: "الحالة", tags: "الوسوم", vendor: "المورّد", product_type: "النوع",
+    seo_title: "عنوان SEO", seo_description: "وصف SEO", sale_from: "بداية التخفيض", sale_to: "نهاية التخفيض",
   };
   const PRODUCT_STATUS = { draft: "مسودة", active: "منشور", archived: "مؤرشف" };
   const unticked = new Set();
@@ -138,13 +155,15 @@
     return `<div class="proposals" data-proposals="${step.id}">${items.map((a) => {
       const p = a.payload || {};
       const creating = a.kind === "store_create_product";
-      const rows = Object.keys(p.after || {}).map((f) => `<tr><th>${FIELD_LABEL[f] || esc(f)}</th>`
-        + (creating ? `<td class="new">${value(f, p.after[f])}</td>` : `<td class="old">${value(f, (p.before || {})[f])}</td><td class="new">${value(f, p.after[f])}</td>`)
-        + "</tr>").join("");
+      const rows = Array.isArray(p.rows)  // offers and bundles: label / value rows
+        ? p.rows.map((r) => `<tr><th dir="auto">${esc(r.label)}</th><td class="new" dir="${/[\u0600-\u06FF]/.test(String(r.value)) ? "rtl" : "auto"}">${esc(r.value)}</td></tr>`).join("")
+        : Object.keys(p.after || {}).map((f) => `<tr><th>${FIELD_LABEL[f] || esc(f)}</th>`
+          + (creating ? `<td class="new">${value(f, p.after[f])}</td>` : `<td class="old">${value(f, (p.before || {})[f])}</td><td class="new">${value(f, p.after[f])}</td>`)
+          + "</tr>").join("");
       const pick = waiting && a.status === "pending"
         ? `<input type="checkbox" class="pick" data-action="${a.id}" aria-label="ضمن الموافقة"${unticked.has(a.id) ? "" : " checked"}>` : "";
       const title = creating ? (p.after || {}).title : p.title;
-      return `<div class="proposal is-${esc(a.status)}"><label class="phead">${pick}<span class="pkind">${creating ? "منتج جديد" : "تعديل"}</span>`
+      return `<div class="proposal is-${esc(a.status)}"><label class="phead">${pick}<span class="pkind">${PROPOSAL_KIND[a.kind] || esc(a.kind)}</span>`
         + `<strong dir="auto">${esc(title || "")}</strong></label>`
         + `<div class="pmeta"><span class="muted">${esc(p.store || "")}</span><span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span></div>`
         + `<table class="ba"><tbody>${rows}</tbody></table>`
@@ -174,8 +193,14 @@
     const trace = step.trace || [];
     if (trace.length) {
       h += `<details class="trace"><summary>${trace.length} ${trace.length > 10 ? "أداة" : "أدوات"} استُخدمت</summary><ul>`
-        + trace.map((t) => `<li class="${t.ok ? "" : "bad"}">${esc(t.tool)} <bdi dir="ltr">${esc(t.target || "")}</bdi></li>`).join("")
+        + trace.map((t) => `<li class="${t.ok ? "" : "bad"}">${esc(TOOL_LABEL[t.tool] || t.tool)} <bdi dir="ltr">${esc(t.target || "")}</bdi>`
+          + `${t.note ? ` <span class="muted" dir="auto">${esc(t.note)}</span>` : ""}</li>`).join("")
         + `</ul></details>`;
+      const audits = trace.filter((t) => t.ok && AUDIT_TOOLS.has(t.tool) && t.note && t.note !== "مكرر");
+      if (audits.length) {
+        h += `<ul class="audits">${audits.map((t) => `<li class="${/حرج|عالٍ/.test(t.note) ? "hot" : ""}"><b>${esc(TOOL_LABEL[t.tool])}</b>`
+          + `${t.target ? ` <bdi dir="auto">${esc(t.target)}</bdi>` : ""}: <span dir="auto">${esc(t.note)}</span></li>`).join("")}</ul>`;
+      }
     }
     const pending = (step.changes || []).filter((c) => c.status === "pending").length;
     const pendingAll = (step.actions || []).filter((a) => a.status === "pending");
@@ -183,20 +208,23 @@
     const pendingActions = pendingAll.filter((a) => !a.kind.startsWith("store_"));
     if ((pending || pendingAll.length) && step.output) h += `<div class="md explain">${md(step.output)}</div>`;
     h += changesHTML(step) + actionsHTML(step) + proposalsHTML(step);
-    if (step.status === "awaiting_approval" && pendingStore.length && !pending && !pendingActions.length) {
-      const n = pendingStore.length;
-      const count = n === 1 ? "تغييرًا واحدًا" : n === 2 ? "تغييرين" : n <= 10 ? `${n} تغييرات` : `${n} تغييرًا`;
-      h += `<div class="gate"><p>يقترح مدير المتاجر ${count} على المتجر. أزل علامة ما لا تريده، ثم طبّق. لن يتغيّر شيء قبل موافقتك.</p>`
-        + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">طبّق المحدد</button>`
-        + `<button type="button" class="secondary" data-act="reject" data-step="${step.id}">ارفض الكل</button></div></div>`;
-    } else if (step.status === "awaiting_approval") {
+    if (step.status === "awaiting_approval") {
+      // one gate for everything the step proposes: files, then git, then store changes
       const parts = [];
       if (pending) parts.push(`تعديل ${countFiles(pending)}`);
       if (pendingActions.length) parts.push(pendingActions.map((a) => ACTION_NAME[a.kind] || a.kind).join(" ثم "));
+      if (pendingStore.length) {
+        const n = pendingStore.length;
+        const count = n === 1 ? "تغييرًا واحدًا" : n === 2 ? "تغييرين" : n <= 10 ? `${n} تغييرات` : `${n} تغييرًا`;
+        parts.push(`${parts.length ? "و" : ""}${count} على المتجر`);
+      }
+      const pick = pendingStore.length ? " أزل علامة ما لا تريده من تغييرات المتجر، ثم قرّر." : " راجعها، ثم قرّر.";
+      let approve = pendingActions.length ? "طبّق الكل" : "طبّق التعديلات";
+      if (pendingStore.length) approve = "طبّق المحدد";
       h += parts.length
-        ? `<div class="gate"><p>يقترح يوسف: ${parts.join("، ثم ")}. راجعها، ثم قرّر. لن يُنفَّذ شيء قبل موافقتك.</p>`
-          + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">${pendingActions.length ? "طبّق الكل" : "طبّق التعديلات"}</button>`
-          + (pending && pendingActions.length ? `<button type="button" class="secondary" data-act="approve-files" data-step="${step.id}">الملفات فقط</button>` : "")
+        ? `<div class="gate"><p>يقترح ${esc(AGENTS[step.agent] || "يوسف")}: ${parts.map((x, i) => (i && !x.startsWith("و") ? "، ثم " : i ? "، " : "") + x).join("")}.${pick} لن يُنفَّذ شيء قبل موافقتك.</p>`
+          + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">${approve}</button>`
+          + (pending && (pendingActions.length || pendingStore.length) ? `<button type="button" class="secondary" data-act="approve-files" data-step="${step.id}">الملفات فقط</button>` : "")
           + `<button type="button" class="secondary" data-act="reject" data-step="${step.id}">ارفض</button></div></div>`
         : `<div class="gate"><p>هذه الخطوة فيها إجراء خارج المحادثة، لذلك تنتظر موافقتك.</p>`
           + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">وافق ونفّذ</button>`

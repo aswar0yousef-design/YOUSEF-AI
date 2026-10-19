@@ -21,11 +21,20 @@ const TOOL_LABEL = {
   git_status: "حالة git", git_diff: "فروقات git", run: "تشغيل أمر", vercel_status: "حالة Vercel",
   list_stores: "عرض المتاجر", store_info: "معلومات المتجر", list_products: "عرض المنتجات", get_product: "قراءة منتج",
   list_orders: "عرض الطلبات", sales_summary: "ملخص المبيعات", propose_product: "منتج مقترح",
-  propose_update: "تعديل مقترح",
+  propose_update: "تعديل مقترح", list_discounts: "عرض العروض", propose_discount: "عرض مقترح",
+  propose_end_discount: "إيقاف عرض مقترح", propose_bundle: "باقة مقترحة",
+  git_commit: "commit مقترح", git_push: "push مقترح", open_pr: "Pull Request مقترح",
+  site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود", check_dependencies: "فحص الحزم",
 };
+const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
 const FIELD_LABEL = {
   title: "العنوان", description: "الوصف", price: "السعر", compare_at_price: "السعر قبل الخصم",
   sale_price: "سعر التخفيض", sku: "SKU", status: "الحالة", tags: "الوسوم", vendor: "المورّد", product_type: "النوع",
+  seo_title: "عنوان البحث (SEO)", seo_description: "وصف البحث (SEO)", sale_from: "بداية التخفيض", sale_to: "نهاية التخفيض",
+};
+const PROPOSAL_KIND = {
+  store_create_product: "منتج جديد", store_update_product: "تعديل منتج", store_create_discount: "عرض جديد",
+  store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة",
 };
 const PRODUCT_STATUS = { draft: "مسودة", active: "منشور", archived: "مؤرشف" };
 const PLATFORM = { shopify: "Shopify", woocommerce: "WooCommerce" };
@@ -209,8 +218,13 @@ function stepHTML(step, task, hideOutput) {
   const trace = step.trace || [];
   if (trace.length) {
     h += `<details class="trace"><summary>ما فعله ${esc(agentName(step.agent))}: ${trace.length} ${trace.length > 10 ? "أداة" : "أدوات"}</summary><ul>`
-      + trace.map((t) => `<li class="${t.ok ? "" : "bad"}"><span>${esc(TOOL_LABEL[t.tool] || t.tool)}</span> <bdi dir="ltr">${esc(t.target || "")}</bdi>${t.ok ? "" : ` <em>${esc(t.note || "تعذّر")}</em>`}</li>`).join("")
+      + trace.map((t) => `<li class="${t.ok ? "" : "bad"}"><span>${esc(TOOL_LABEL[t.tool] || t.tool)}</span> <bdi dir="ltr">${esc(t.target || "")}</bdi>${t.ok ? (t.note ? ` <small dir="auto">${esc(t.note)}</small>` : "") : ` <em>${esc(t.note || "تعذّر")}</em>`}</li>`).join("")
       + "</ul></details>";
+    const audits = trace.filter((t) => t.ok && AUDIT_TOOLS.has(t.tool) && t.note && t.note !== "مكرر");
+    if (audits.length) {
+      h += `<ul class="audits" aria-label="نتائج الفحص">${audits.map((t) => `<li class="${/حرج|عالٍ/.test(t.note) ? "hot" : ""}">`
+        + `<b>${esc(TOOL_LABEL[t.tool])}</b>${t.target ? ` <bdi dir="auto">${esc(t.target)}</bdi>` : ""}: <span dir="auto">${esc(t.note)}</span></li>`).join("")}</ul>`;
+    }
   }
   const changes = step.changes || [];
   const allActions = step.actions || [];
@@ -226,24 +240,26 @@ function stepHTML(step, task, hideOutput) {
   if (changes.length) h += changesHTML(changes);
   if (actions.length) h += actionsHTML(actions);
   if (proposals.length) h += proposalsHTML(proposals, step);
-  if (step.status === "awaiting_approval" && pendingProposals.length && !pendingChanges && !pendingActions.length) {
-    const updates = pendingProposals.filter((a) => a.kind === "store_update_product").length;
-    const creates = pendingProposals.length - updates;
-    const parts = [];
-    if (updates) parts.push(`تعديل ${countProducts(updates)}`);
-    if (creates) parts.push(`إنشاء ${countProducts(creates)}`);
-    h += `<div class="gate"><p>يقترح ${esc(agentName(step.agent))}: ${parts.join("، و")}. أزل علامة ما لا تريده، ثم طبّق. لن يتغيّر شيء في المتجر قبل موافقتك.</p>`
-      + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">طبّق المحدد</button>`
-      + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفض الكل</button></div>`;
-  } else if (step.status === "awaiting_approval" && (pendingChanges || pendingActions.length)) {
+  if (step.status === "awaiting_approval" && (pendingChanges || pendingActions.length || pendingProposals.length)) {
+    // one gate for everything the step proposes: files, then git, then store changes
     const parts = [];
     if (pendingChanges) parts.push(`تعديل ${countFiles(pendingChanges)}`);
     const names = { git_commit: "commit", git_push: "push", open_pr: "Pull Request" };
     if (pendingActions.length) parts.push(pendingActions.map((a) => names[a.kind] || a.kind).join(" ثم "));
-    h += `<div class="gate"><p>يقترح ${esc(agentName(step.agent))}: ${parts.join("، ثم ")}. راجعها، ثم قرّر. لن يُنفَّذ شيء قبل موافقتك.</p>`
-      + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">${pendingActions.length ? "طبّق الكل" : "طبّق التعديلات"}</button>`
-      + (pendingChanges && pendingActions.length ? `<button type="button" class="ghost" data-act="approve-files" data-step="${step.id}">الملفات فقط</button>` : "")
-      + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفض</button></div>`;
+    const storeBits = storeParts(pendingProposals);
+    let summary = parts.join("، ثم ");
+    if (storeBits.length) summary += (summary ? "، وفي المتجر: " : "") + storeBits.join("، و");
+    const onlyStore = !pendingChanges && !pendingActions.length;
+    const how = pendingProposals.length > 1 || (pendingProposals.length && !onlyStore)
+      ? "أزل علامة ما لا تريده من تغييرات المتجر، ثم قرّر." : "راجعها، ثم قرّر.";
+    const safe = onlyStore ? "لن يتغيّر شيء في المتجر قبل موافقتك." : "لن يُنفَّذ شيء قبل موافقتك.";
+    let approve = "طبّق التعديلات";
+    if (pendingProposals.length) approve = "طبّق المحدد";
+    else if (pendingActions.length) approve = "طبّق الكل";
+    h += `<div class="gate"><p>يقترح ${esc(agentName(step.agent))}: ${summary}. ${how} ${safe}</p>`
+      + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">${approve}</button>`
+      + (pendingChanges && (pendingActions.length || pendingProposals.length) ? `<button type="button" class="ghost" data-act="approve-files" data-step="${step.id}">الملفات فقط</button>` : "")
+      + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">${onlyStore ? "ارفض الكل" : "ارفض"}</button></div>`;
   } else if (step.status === "awaiting_approval") {
     h += `<div class="gate"><p>هذه الخطوة فيها إجراء خارج المحادثة (نشر، إرسال، دفع، حذف…)، لذلك تنتظر موافقتك.</p>`
       + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">وافق ونفّذ</button>`
@@ -273,11 +289,39 @@ function countProducts(n) {
   return n <= 10 ? `${n} منتجات` : `${n} منتجًا`;
 }
 
+function countOffers(n) {
+  if (n === 1) return "عرض واحد";
+  if (n === 2) return "عرضين";
+  return n <= 10 ? `${n} عروض` : `${n} عرضًا`;
+}
+
+function countBundles(n) {
+  if (n === 1) return "باقة واحدة";
+  if (n === 2) return "باقتين";
+  return n <= 10 ? `${n} باقات` : `${n} باقة`;
+}
+
+function storeParts(proposals) {
+  const n = (kind) => proposals.filter((a) => a.kind === kind).length;
+  const parts = [];
+  if (n("store_update_product")) parts.push(`تعديل ${countProducts(n("store_update_product"))}`);
+  if (n("store_create_product")) parts.push(`إنشاء ${countProducts(n("store_create_product"))}`);
+  if (n("store_create_discount")) parts.push(`إنشاء ${countOffers(n("store_create_discount"))}`);
+  if (n("store_end_discount")) parts.push(`إيقاف ${countOffers(n("store_end_discount"))}`);
+  if (n("store_create_bundle")) parts.push(`إنشاء ${countBundles(n("store_create_bundle"))}`);
+  return parts;
+}
+
 function countOrders(n) {
   if (n === 0) return "لا طلبات";
   if (n === 1) return "طلب واحد";
   if (n === 2) return "طلبان";
   return n <= 10 ? `${n} طلبات` : `${n} طلبًا`;
+}
+
+// mixed values such as "23.000 OMR (توفير 13%)" read right only in an Arabic paragraph
+function textDir(value) {
+  return /[\u0600-\u06FF]/.test(String(value ?? "")) ? "rtl" : "auto";
 }
 
 function plainText(html, limit = 160) {
@@ -292,6 +336,12 @@ function fieldValue(field, value) {
   if (field === "status") return esc(PRODUCT_STATUS[value] || value);
   if (field === "tags") return Array.isArray(value) && value.length ? value.map((t) => `<span class="chip">${esc(t)}</span>`).join(" ") : `<span class="muted">—</span>`;
   if (field === "description") return `<span dir="auto">${esc(plainText(value))}</span>`;
+  if (field === "sale_from" || field === "sale_to") {
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) {
+      return `<bdi>${esc(d.toLocaleString("ar-u-nu-latn", { dateStyle: "medium", timeStyle: "short" }))}</bdi>`;
+    }
+  }
   if (["price", "compare_at_price", "sale_price", "sku"].includes(field)) return `<bdi dir="ltr">${esc(value)}</bdi>`;
   return `<span dir="auto">${esc(value)}</span>`;
 }
@@ -301,10 +351,16 @@ function proposalsHTML(proposals, step) {
   return `<div class="proposals" data-proposals="${step.id}">${proposals.map((a) => {
     const p = a.payload || {};
     const creating = a.kind === "store_create_product";
+    const listed = Array.isArray(p.rows);  // offers and bundles: label / value rows
     const fields = Object.keys(p.after || {});
-    const rows = fields.map((f) => creating
-      ? `<tr><th scope="row">${FIELD_LABEL[f] || esc(f)}</th><td class="new" colspan="2">${fieldValue(f, p.after[f])}</td></tr>`
-      : `<tr><th scope="row">${FIELD_LABEL[f] || esc(f)}</th><td class="old">${fieldValue(f, (p.before || {})[f])}</td><td class="new">${fieldValue(f, p.after[f])}</td></tr>`).join("");
+    const rows = listed
+      ? p.rows.map((r) => `<tr><th scope="row" dir="auto">${esc(r.label)}</th><td class="new" colspan="2" dir="${textDir(r.value)}">${esc(r.value)}</td></tr>`).join("")
+      : fields.map((f) => creating
+        ? `<tr><th scope="row">${FIELD_LABEL[f] || esc(f)}</th><td class="new" colspan="2">${fieldValue(f, p.after[f])}</td></tr>`
+        : `<tr><th scope="row">${FIELD_LABEL[f] || esc(f)}</th><td class="old">${fieldValue(f, (p.before || {})[f])}</td><td class="new">${fieldValue(f, p.after[f])}</td></tr>`).join("");
+    const head = listed || creating
+      ? `<th scope="col">${listed ? "البند" : "الحقل"}</th><th scope="col" colspan="2">القيمة</th>`
+      : `<th scope="col">الحقل</th><th scope="col">قبل</th><th scope="col">بعد</th>`;
     const pick = waiting && a.status === "pending"
       ? `<input type="checkbox" class="pick" data-action="${a.id}" aria-label="ضمن الموافقة"${state.unticked.has(a.id) ? "" : " checked"}>`
       : "";
@@ -316,11 +372,11 @@ function proposalsHTML(proposals, step) {
     }
     const warn = (p.warnings || []).map((w) => `<p class="pwarn" dir="auto">تنبيه: ${esc(w)}</p>`).join("");
     const title = creating ? (p.after || {}).title : p.title;
-    return `<article class="proposal is-${esc(a.status)}"><header><label class="phead">${pick}`
-      + `<span class="pkind">${creating ? "منتج جديد" : "تعديل منتج"}</span> <strong dir="auto">${esc(title || "")}</strong></label>`
+    return `<article class="proposal is-${esc(a.status)} kind-${esc(a.kind)}"><header><label class="phead">${pick}`
+      + `<span class="pkind">${PROPOSAL_KIND[a.kind] || esc(a.kind)}</span> <strong dir="auto">${esc(title || "")}</strong></label>`
       + `<span class="pstore">${esc(p.store || "")} · ${PLATFORM[p.platform] || ""}</span>`
       + `<span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span></header>`
-      + `<table class="ba"><thead><tr><th scope="col">الحقل</th>${creating ? `<th scope="col" colspan="2">القيمة</th>` : `<th scope="col">قبل</th><th scope="col">بعد</th>`}</tr></thead>`
+      + `<table class="ba"><thead><tr>${head}</tr></thead>`
       + `<tbody>${rows}</tbody></table>${warn}${result}</article>`;
   }).join("")}</div>`;
 }
@@ -871,13 +927,24 @@ function renderLessons(lessons) {
   }
 }
 
+const NEED_LABEL = { stores: "متجر متصل", workspace: "مجلد مشروع" };
+
+function agentState(a) {
+  if (!a.available) return [false, `في المرحلة ${a.phase}`];
+  const needs = a.needs || [];
+  const have = { stores: state.stores.length > 0, workspace: state.workspaces.length > 0 };
+  if (!needs.length || needs.some((n) => have[n])) return [true, "يعمل الآن"];
+  return [false, `يحتاج ${needs.map((n) => NEED_LABEL[n] || n).join(" أو ")}`];
+}
+
 function renderAgents() {
   const ul = $("#agents");
   ul.replaceChildren();
   for (const a of state.agents) {
+    const [live, label] = agentState(a);
     const li = document.createElement("li");
-    li.className = a.available ? "is-live" : "";
-    li.innerHTML = `<span>${esc(a.name)}</span><span>${a.available ? "يعمل الآن" : `في المرحلة ${a.phase}`}</span>`;
+    li.className = live ? "is-live" : "";
+    li.innerHTML = `<span>${esc(a.name)}</span><span>${esc(label)}</span>`;
     ul.appendChild(li);
   }
 }
@@ -895,9 +962,9 @@ async function openDrawer() {
     renderServices();
     renderRouting();
     renderLessons(lessons);
-    renderAgents();
     await loadWorkspaces();
     await loadStores();
+    renderAgents();
     renderStoreForm();
     $("#ws-status").textContent = "";
     $("#store-status").textContent = "";

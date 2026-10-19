@@ -223,6 +223,12 @@ button { cursor: pointer; }
 .trace li span { color: var(--ink); font-weight: 600; }
 .trace li.bad { color: var(--danger); }
 .trace li em { font-style: normal; }
+.trace li small { color: var(--muted); font-size: 12px; }
+/* technical checks: one line per check with its severity counts */
+.audits { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+.audits li { border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; background: var(--surface); }
+.audits li.hot { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+.audits li.hot span { color: var(--danger); font-weight: 600; }
 
 .changes { margin-top: 10px; display: grid; gap: 8px; }
 .explain { margin-top: 10px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
@@ -276,6 +282,7 @@ button { cursor: pointer; }
 .ba tbody th { width: 9em; font-weight: 600; }
 .ba td.old { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent); }
 .ba td.new { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.kind-store_end_discount .ba td.new { background: color-mix(in srgb, var(--saffron) 10%, transparent); }
 .chip { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); margin: 1px 0; }
 .pwarn { margin: 8px 0 0; font-size: 13px; color: var(--saffron); font-weight: 600; }
 .presult { margin: 8px 0 0; font-size: 13px; }
@@ -291,6 +298,7 @@ button { cursor: pointer; }
 .muted { color: var(--muted); font-size: 13px; }
 
 /* ---------- rendered text ---------- */
+.md { overflow-wrap: break-word; } /* long links in results must not widen the page on phones */
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p, .md ul, .md ol { margin: 0 0 12px; }

@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__
 from .config import CLOUD_PROVIDERS, SettingsError
 from .core import AGENTS
+from .core.agents import NEEDS
 from .keystore import KeyStoreError
 from .models import ProviderError
 from .voice import AudioError, VoiceNotInstalled, VoiceNotReady
@@ -283,7 +284,7 @@ class Api:
         }
 
     def agents(self, query, body):
-        return 200, {"agents": [a.public() for a in AGENTS.values()]}
+        return 200, {"agents": [dict(a.public(), needs=list(NEEDS.get(a.key, ()))) for a in AGENTS.values()]}
 
     # ---- tasks -----------------------------------------------------------------
     def list_tasks(self, query, body):

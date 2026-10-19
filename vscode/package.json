@@ -49,6 +49,7 @@
       { "command": "yousef.ask", "title": "يوسف: اسأل عن هذا الكود", "category": "YOUSEF AI" },
       { "command": "yousef.explain", "title": "يوسف: اشرح هذا", "category": "YOUSEF AI" },
       { "command": "yousef.fix", "title": "يوسف: أصلح هذا", "category": "YOUSEF AI" },
+      { "command": "yousef.audit", "title": "يوسف: افحص المشروع (ثغرات وأخطاء)", "category": "YOUSEF AI" },
       { "command": "yousef.allowWorkspace", "title": "اسمح ليوسف بالعمل على هذا المشروع", "category": "YOUSEF AI" },
       { "command": "yousef.newConversation", "title": "محادثة جديدة مع يوسف", "category": "YOUSEF AI" },
       { "command": "yousef.openDashboard", "title": "افتح لوحة يوسف في المتصفح", "category": "YOUSEF AI" }
@@ -57,7 +58,8 @@
       "editor/context": [
         { "command": "yousef.ask", "group": "yousef@1" },
         { "command": "yousef.explain", "group": "yousef@2" },
-        { "command": "yousef.fix", "group": "yousef@3" }
+        { "command": "yousef.fix", "group": "yousef@3" },
+        { "command": "yousef.audit", "group": "yousef@4" }
       ]
     },
     "keybindings": [
