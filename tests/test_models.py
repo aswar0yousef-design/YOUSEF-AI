@@ -193,9 +193,13 @@ class ReasoningModelTest(unittest.TestCase):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
                 outer.requests.append(body)
                 content, reason = outer.replies.pop(0) if outer.replies else ('{"done": "ok"}', "stop")
-                data = json.dumps({"message": {"role": "assistant", "content": content, "thinking": "..."},
-                                   "done": True, "done_reason": reason}).encode()
-                self.send_response(200)
+                status = 200
+                if reason == "crash":
+                    status, data = 500, json.dumps({"error": content}).encode()
+                else:
+                    data = json.dumps({"message": {"role": "assistant", "content": content, "thinking": "..."},
+                                       "done": True, "done_reason": reason}).encode()
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -205,6 +209,7 @@ class ReasoningModelTest(unittest.TestCase):
         _th.Thread(target=self.server.serve_forever, daemon=True).start()
         from yousef.models.providers import OllamaProvider
         self.provider = OllamaProvider(f"http://127.0.0.1:{self.server.server_port}", 8192)
+        self.provider.retry_pause = 0
 
     def tearDown(self):
         self.server.shutdown()
@@ -216,7 +221,7 @@ class ReasoningModelTest(unittest.TestCase):
         self.assertEqual(self.provider.chat("gpt-oss:20b", msgs, json_mode=True), '{"tool": "list_stores"}')
         body = self.requests[0]
         self.assertNotIn("format", body)
-        self.assertEqual((body["think"], body["options"]["num_ctx"]), ("low", 16384))
+        self.assertEqual((body["think"], body["options"]["num_ctx"]), ("low", 8192))  # the user's context size
         self.assertIn("single JSON object only", body["messages"][0]["content"])
         self.assertEqual(msgs[0]["content"], "You are a tool user.")  # the caller's messages are untouched
         self.provider.chat("gpt-oss:20b", msgs)  # plain chat: reasoning level only
@@ -236,3 +241,19 @@ class ReasoningModelTest(unittest.TestCase):
         with self.assertRaises(ProviderError) as cm:
             self.provider.chat("qwen2.5:7b", msgs, json_mode=True)
         self.assertIn("ran out of context", str(cm.exception))
+
+    def test_runner_crash_is_retried_then_explained(self):
+        crash = ("llama-server process has terminated: exit status 0xc0000409: The system detected an overrun of a "
+                 "stack-based buffer in this application.: CUDA error: shared object initialization failed")
+        msgs = [{"role": "user", "content": "مرحبا"}]
+        self.replies = [(crash, "crash"), ("أهلًا", "stop")]
+        self.assertEqual(self.provider.chat("gpt-oss:20b", msgs), "أهلًا")  # Ollama restarts its runner
+        self.assertEqual(len(self.requests), 2)
+        self.replies = [(crash, "crash"), (crash, "crash")]
+        with self.assertRaises(ProviderError) as cm:
+            self.provider.chat("gpt-oss:20b", msgs)
+        self.assertIn("ذاكرة كرت الشاشة", str(cm.exception))
+        self.assertIn("qwen2.5:7b", str(cm.exception))
+        self.replies = [('json: unknown field "think"', "crash"), ("ok", "stop")]
+        self.assertEqual(self.provider.chat("gpt-oss:20b", msgs), "ok")  # an older Ollama without reasoning levels
+        self.assertNotIn("think", self.requests[-1])

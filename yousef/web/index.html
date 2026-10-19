@@ -210,6 +210,7 @@
         <option value="cpu">المعالج (يعمل دائمًا)</option>
         <option value="cuda">كرت الشاشة NVIDIA (أسرع بكثير؛ شغّل install-voice-gpu.bat مرة واحدة)</option>
       </select>
+      <p class="panel-note">كرت الشاشة يتقاسمه الصوت مع Ollama. على كرت 6GB مع نموذج كبير مثل gpt-oss:20b قد تمتلئ ذاكرته فيتوقف Ollama؛ عندها اجعل الصوت على المعالج.</p>
       <label for="voice-language">لغة الكلام</label>
       <select id="voice-language">
         <option value="auto">تلقائي: عربي أو إنجليزي</option>

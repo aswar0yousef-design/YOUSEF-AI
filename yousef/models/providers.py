@@ -7,6 +7,7 @@ third-party SDKs to install or keep in sync.
 from __future__ import annotations
 
 import logging
+import time
 import urllib.parse
 
 from .base import NO_PROXY_OPENER, Provider, ProviderError, http_json, split_system
@@ -17,7 +18,16 @@ _EMBED_HINTS = ("embed", "bge-", "bge:", "all-minilm", "snowflake-arctic-embed")
 JSON_ONLY = "Respond with a single JSON object only, no other text."
 # models that reason in a separate channel (Ollama returns it as message.thinking)
 _REASONING = ("gpt-oss",)
-REASONING_CTX = 16384  # their hidden reasoning shares the context window with long tool prompts
+# Ollama's model runner died (usually the graphics card ran out of memory); Ollama restarts it on the next request
+_RUNNER_CRASH = ("process has terminated", "cuda error", "out of memory", "unable to allocate", "cudamalloc",
+                 "exit status 0xc0000409", "unexpected eof", "connection reset")
+
+
+def explain_crash(model: str, error: Exception) -> str:
+    return (f"توقّف Ollama أثناء تشغيل {model}، وغالبًا امتلأت ذاكرة كرت الشاشة. جرّب بالترتيب: أعد المحاولة؛ "
+            "واجعل الصوت على «المعالج» إن كان على كرت الشاشة (الإعدادات ← الصوت)؛ وأغلق البرامج والألعاب التي "
+            "تستخدم الكرت؛ أو اختر نموذجًا أصغر يناسب 6GB مثل qwen2.5:7b. "
+            f"(الخطأ: {str(error)[:180]})")
 
 
 def _is_reasoning(model: str) -> bool:
@@ -38,6 +48,8 @@ class OllamaProvider(Provider):
     label = "Ollama (محلي)"
     is_local = True
 
+    retry_pause = 3.0
+
     def __init__(self, base_url: str, num_ctx: int = 8192):
         self.base_url = base_url.rstrip("/")
         self.num_ctx = num_ctx
@@ -49,16 +61,35 @@ class OllamaProvider(Provider):
     def chat_models(self) -> list[str]:
         return [m for m in self.list_models() if not any(h in m.lower() for h in _EMBED_HINTS)]
 
+    def _post(self, body: dict) -> dict:
+        # First call can be slow while the model loads into GPU memory.
+        return http_json("POST", f"{self.base_url}/api/chat", body=body, timeout=900, opener=NO_PROXY_OPENER) or {}
+
     def _call(self, model: str, messages: list[dict], json_format: bool) -> tuple[str, dict]:
-        reasoning = _is_reasoning(model)
-        options = {"temperature": 0.3, "num_ctx": max(self.num_ctx, REASONING_CTX) if reasoning else self.num_ctx}
-        body = {"model": model, "messages": messages, "stream": False, "options": options}
+        # the context size stays the user's: a larger one makes Ollama reload the model and can overflow a small GPU
+        body = {"model": model, "messages": messages, "stream": False,
+                "options": {"temperature": 0.3, "num_ctx": self.num_ctx}}
         if json_format:
             body["format"] = "json"
-        if reasoning:
+        if _is_reasoning(model):
             body["think"] = "low"  # gpt-oss cannot switch reasoning off; "low" keeps answers fast
-        # First call can be slow while the model loads into GPU memory.
-        data = http_json("POST", f"{self.base_url}/api/chat", body=body, timeout=900, opener=NO_PROXY_OPENER) or {}
+        try:
+            data = self._post(body)
+        except ProviderError as e:
+            text = str(e).lower()
+            if "think" in body and "think" in text:
+                log.warning("%s: this Ollama does not accept a reasoning level (%s); asking without it", model, e)
+                body.pop("think")
+                data = self._post(body)
+            elif any(c in text for c in _RUNNER_CRASH):
+                log.warning("%s: Ollama's runner stopped (%s); trying once more", model, e)
+                time.sleep(self.retry_pause)
+                try:
+                    data = self._post(body)
+                except ProviderError as again:
+                    raise ProviderError(explain_crash(model, again)) from None
+            else:
+                raise
         message = data.get("message") or {}
         if "content" not in message:
             raise ProviderError(f"Ollama returned no message: {str(data)[:200]}")
