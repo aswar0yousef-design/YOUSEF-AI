@@ -284,8 +284,8 @@ class Api:
 
     def create_task(self, query, body):
         source = body.get("source", "text")
-        if source not in ("text", "voice"):
-            raise ApiError(400, "source must be text or voice")
+        if source not in ("text", "voice", "vscode"):
+            raise ApiError(400, "source must be text, voice or vscode")
         context = _clean_context(body.get("context"))
         workspace = body.get("workspace") or None
         if workspace is not None:

@@ -77,7 +77,7 @@ CREATE INDEX IF NOT EXISTS changes_step ON changes(step_id);
 """
 
 ACTIVE_STATUSES = ("planning", "running", "waiting")
-TASK_SOURCES = ("text", "voice")
+TASK_SOURCES = ("text", "voice", "vscode")
 LESSON_KINDS = ("rule", "success", "failure")
 
 _TASK_FIELDS = {"status", "final", "error", "feedback"}

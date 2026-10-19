@@ -275,6 +275,7 @@ function taskHTML(t) {
   let h = `<h2 class="ask" dir="auto">${esc(t.request)}</h2>`;
   const ctx = t.context || {};
   const meta = [];
+  if (t.source === "vscode") meta.push("من VS Code");
   if (t.workspace) meta.push(`المشروع <bdi>${esc(t.workspace)}</bdi>`);
   if (ctx.file) meta.push(`الملف <bdi dir="ltr">${esc(ctx.file)}</bdi>${ctx.start_line ? ` (الأسطر ${ctx.start_line}–${ctx.end_line})` : ""}`);
   if (meta.length) h += `<p class="task-meta">${meta.join("، ")}</p>`;

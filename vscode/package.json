@@ -1,0 +1,78 @@
+{
+  "name": "yousef-ai",
+  "displayName": "YOUSEF AI",
+  "description": "يوسف داخل VS Code: اسأل عن الكود، أصلحه، وراجع تعديلاته في محرر الفروقات قبل تطبيقها. يعمل مع خادم يوسف المحلي على جهازك.",
+  "version": "0.3.0",
+  "publisher": "yousef-ai",
+  "license": "SEE LICENSE IN README.md",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": ["yousef", "ollama", "arabic", "assistant", "agent"],
+  "main": "./extension.js",
+  "extensionKind": ["ui", "workspace"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "يوسف لا يقرأ مجلد المشروع إلا بعد أن تسمح له بذلك."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "yousef",
+          "title": "YOUSEF AI",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "yousef": [
+        {
+          "type": "webview",
+          "id": "yousef.chat",
+          "name": "يوسف"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "yousef.focus", "title": "افتح يوسف", "category": "YOUSEF AI" },
+      { "command": "yousef.ask", "title": "يوسف: اسأل عن هذا الكود", "category": "YOUSEF AI" },
+      { "command": "yousef.explain", "title": "يوسف: اشرح هذا", "category": "YOUSEF AI" },
+      { "command": "yousef.fix", "title": "يوسف: أصلح هذا", "category": "YOUSEF AI" },
+      { "command": "yousef.allowWorkspace", "title": "اسمح ليوسف بالعمل على هذا المشروع", "category": "YOUSEF AI" },
+      { "command": "yousef.newConversation", "title": "محادثة جديدة مع يوسف", "category": "YOUSEF AI" },
+      { "command": "yousef.openDashboard", "title": "افتح لوحة يوسف في المتصفح", "category": "YOUSEF AI" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "yousef.ask", "group": "yousef@1" },
+        { "command": "yousef.explain", "group": "yousef@2" },
+        { "command": "yousef.fix", "group": "yousef@3" }
+      ]
+    },
+    "keybindings": [
+      { "command": "yousef.focus", "key": "ctrl+alt+y", "mac": "cmd+alt+y" },
+      { "command": "yousef.ask", "key": "ctrl+alt+u", "mac": "cmd+alt+u", "when": "editorTextFocus" }
+    ],
+    "configuration": {
+      "title": "YOUSEF AI",
+      "properties": {
+        "yousef.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "عنوان خادم يوسف المحلي (يعمل عند تشغيل start.bat)."
+        }
+      }
+    }
+  }
+}
