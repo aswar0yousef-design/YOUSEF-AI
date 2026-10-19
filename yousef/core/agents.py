@@ -27,6 +27,10 @@ PROJECT_TOOLS = ("For this step you can work in the user's project folder \"{nam
 STORE_TOOLS = ("For this step you can read the user's connected online stores and propose product changes through "
                "the tools described below. You still cannot delete products, refund or edit orders, publish posts, "
                "send messages, buy, trade, browse the web or control the computer.")
+SOCIAL_TOOLS = ("For this step you can read the user's connected Facebook Pages and Instagram accounts, their uploaded "
+                "pictures and their stores' products, and propose posts through the tools described below; posts are "
+                "published only after the user approves. You still cannot change products or orders, send messages, "
+                "buy, trade, or control the computer.")
 TECH_TOOLS = ("For this step you can check the user's own connected stores, their live sites and the attached project "
               "folder, and propose fixes through the tools described below. You still cannot publish posts, send "
               "messages, buy, trade, delete products, check sites that are not the user's, or control the computer.")
@@ -43,8 +47,10 @@ class Agent:
     phase: int = 1
 
     def system_prompt(self, rules: list[str], project: str | None = None, stores: bool = False,
-                      tech: bool = False) -> str:
-        if tech:
+                      tech: bool = False, social: bool = False) -> str:
+        if social:
+            abilities = SOCIAL_TOOLS
+        elif tech:
             abilities = TECH_TOOLS
         elif stores:
             abilities = STORE_TOOLS
@@ -116,8 +122,18 @@ AGENTS: dict[str, Agent] = {
             "the fix. Order by severity, most serious first.",
             phase=5,
         ),
-        Agent("social_publisher", "ناشر السوشيال", "Publishes and schedules posts on social platforms.",
-              "writing", available=False, phase=6),
+        Agent(
+            "social_publisher", "ناشر السوشيال",
+            "Writes posts for the user's connected Facebook Pages and Instagram business accounts and publishes or "
+            "schedules them after approval: reads recent posts, uses the user's uploaded pictures and store product "
+            "images, fits the text to each platform, and cancels scheduled posts.",
+            "writing",
+            "Social media publisher. Write in the user's language and the brand's voice. Fit each platform: on "
+            "Instagram a strong first line, short paragraphs and 5-15 relevant hashtags at the end; on Facebook a "
+            "shorter text with a clear call to action and the link. Take prices, offers and dates only from the "
+            "store or the user, never invent them.",
+            phase=6,
+        ),
         Agent("ads_manager", "مدير الإعلانات", "Plans and manages ad campaigns.",
               "analysis", available=False, phase=6),
         Agent("trading_analyst", "محلل التداول", "Market analysis, alerts and paper trading.",
@@ -129,9 +145,9 @@ AGENTS: dict[str, Agent] = {
 
 
 # agents that also need something connected before the planner may use them (any one of these)
-NEEDS = {"store_manager": ("stores",), "tech_manager": ("stores", "workspace")}
+NEEDS = {"store_manager": ("stores",), "tech_manager": ("stores", "workspace"), "social_publisher": ("social",)}
 # what an agent becomes when what it needs is missing: advice instead of tools
-FALLBACK = {"store_manager": "analyst", "tech_manager": "coder"}
+FALLBACK = {"store_manager": "analyst", "tech_manager": "coder", "social_publisher": "writer"}
 
 
 def _usable(agent: Agent, connected) -> bool:

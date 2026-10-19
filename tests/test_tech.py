@@ -329,7 +329,9 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(get_agent("tech_manager", frozenset({"stores"})).key, "tech_manager")
         self.assertNotIn("tech_manager", [a.key for a in available_agents()])
         self.assertIn("tech_manager", [a.key for a in available_agents(frozenset({"stores"}))])
-        self.assertEqual(get_agent("social_publisher").key, "general")  # still planned
+        self.assertEqual(get_agent("social_publisher").key, "writer")  # no account: drafts only
+        self.assertEqual(get_agent("social_publisher", frozenset({"social"})).key, "social_publisher")
+        self.assertEqual(get_agent("ads_manager").key, "general")  # still planned
 
 
 class TechScript:

@@ -26,6 +26,7 @@ from .config import CLOUD_PROVIDERS, SettingsError
 from .core import AGENTS
 from .core.agents import NEEDS
 from .keystore import KeyStoreError
+from .media import MAX_IMAGE_BYTES, MediaError
 from .models import ProviderError
 from .voice import AudioError, VoiceNotInstalled, VoiceNotReady
 from .integrations import StoreError
@@ -43,11 +44,13 @@ STATIC_FILES = {
     "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
     "/voice-worklet.js": ("voice-worklet.js", "text/javascript; charset=utf-8"),
 }
-CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+CSP = ("default-src 'self'; img-src 'self' data: https:; style-src 'self'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 MAX_BODY = 1_000_000
 MAX_AUDIO = 4_000_000  # about two minutes of 16 kHz mono audio
 AUDIO_ROUTES = {"/api/voice/transcribe"}
+IMAGE_ROUTE = "/api/media"
+MEDIA_FILE = re.compile(r"/api/media/(img-[0-9a-f]{16}\.(?:jpg|png))")
 
 
 class ApiError(Exception):
@@ -105,8 +108,12 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
                     raise ApiError(404, "not found")
                 if method != "GET":
                     self._check_write_request()
+                if method == "GET" and MEDIA_FILE.fullmatch(parsed.path):
+                    return self._media(MEDIA_FILE.fullmatch(parsed.path).group(1))
                 if method == "POST" and parsed.path in AUDIO_ROUTES:
                     body = {"audio": self._read_audio()}
+                elif method == "POST" and parsed.path == IMAGE_ROUTE:
+                    body = {"image": self._read_image(), "name": unquote(self.headers.get("X-File-Name") or "")}
                 else:
                     body = self._read_json() if method in ("POST", "PUT") else {}
                 status, payload = api.dispatch(method, parsed.path, parse_qs(parsed.query), body)
@@ -166,6 +173,24 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
             if length == 0:
                 raise ApiError(400, "empty audio")
             return self.rfile.read(length)
+
+        def _read_image(self) -> bytes:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_IMAGE_BYTES:
+                raise ApiError(413, "الصورة أكبر من 8MB")
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip() not in ("image/jpeg", "image/png"):
+                raise ApiError(415, "الصورة يجب أن تكون JPEG أو PNG")
+            if length == 0:
+                raise ApiError(400, "empty image")
+            return self.rfile.read(length)
+
+        def _media(self, name: str):
+            try:
+                data, ctype = api.app.media.read(name)
+            except MediaError:
+                raise ApiError(404, "not found") from None
+            self._send(200, data, ctype, {"Cache-Control": "private, max-age=86400",
+                                          "Content-Security-Policy": "default-src 'none'"})
 
         def _send(self, status: int, body: bytes, content_type: str, extra: dict | None = None):
             self.send_response(status)
@@ -252,6 +277,12 @@ class Api:
             ("POST", r"/api/stores/([0-9a-f]{8})/test", self.test_store),
             ("GET", r"/api/stores/([0-9a-f]{8})/summary", self.store_summary),
             ("DELETE", r"/api/stores/([0-9a-f]{8})", self.remove_store),
+            ("GET", r"/api/social/posts", self.list_posts),
+            ("POST", r"/api/social/posts/(\d+)/cancel", self.cancel_post),
+            ("POST", r"/api/social/posts/(\d+)/publish", self.publish_post),
+            ("GET", r"/api/media", self.list_media),
+            ("POST", r"/api/media", self.upload_media),
+            ("DELETE", r"/api/media/(img-[0-9a-f]{16}\.(?:jpg|png))", self.delete_media),
             ("GET", r"/api/social", self.list_social),
             ("POST", r"/api/social", self.connect_social),
             ("POST", r"/api/social/(\d{1,30})/test", self.test_social),
@@ -541,6 +572,40 @@ class Api:
                          "scheduled": page.facebook_scheduled()}
         except ProviderError as e:
             raise ApiError(502, str(e)) from None
+
+    def list_posts(self, query, body):
+        wanted = tuple(s for s in (query.get("status", [""])[0] or "").split(",") if s) or None
+        limit = max(1, min(_int(query.get("limit", ["50"])[0]), 200))
+        return 200, {"posts": self.app.memory.list_social_posts(wanted, limit)}
+
+    def cancel_post(self, post_id, query, body):
+        try:
+            note = self.app.publisher.cancel(_int(post_id))
+        except ProviderError as e:
+            raise ApiError(400, str(e)) from None
+        return 200, {"note": note, "post": self.app.memory.get_social_post(_int(post_id))}
+
+    def publish_post(self, post_id, query, body):
+        try:
+            post = self.app.publisher.publish_now(_int(post_id))
+        except ProviderError as e:
+            raise ApiError(400, str(e)) from None
+        return 200, {"post": post}
+
+    def list_media(self, query, body):
+        return 200, {"files": self.app.media.list()}
+
+    def upload_media(self, query, body):
+        try:
+            item = self.app.media.save(body["image"], body.get("name") or "")
+        except MediaError as e:
+            raise ApiError(400, str(e)) from None
+        return 201, {"media": item, "files": self.app.media.list()}
+
+    def delete_media(self, name, query, body):
+        if not self.app.media.delete(name):
+            raise ApiError(404, "not found")
+        return 200, {"files": self.app.media.list()}
 
     def remove_social(self, page_id, query, body):
         if not self.app.social.remove(page_id):

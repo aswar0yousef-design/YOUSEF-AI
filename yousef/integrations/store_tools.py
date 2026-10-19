@@ -331,6 +331,8 @@ class StoreToolbox:
             lines.append("variants (id | title | price | sku | inventory):")
             lines.extend(f"  {v['id']} | {v['title']} | {v['price']} | {v.get('sku') or '-'} | {v.get('inventory')}"
                          for v in p["variants"])
+        if p.get("image_urls"):
+            lines.append("images: " + " ".join(p["image_urls"]))
         lines.append(f"description: {plain(p.get('description'), 1500) or '-'}")
         return "\n".join(lines)
 

@@ -10,6 +10,8 @@ Flow for every request:
    connected, the store manager reads them and its product proposals wait for
    approval with before/after values. The technical manager checks the stores'
    sites and the project code, and its fixes wait for approval the same way.
+   With social accounts connected, the social publisher proposes posts that are
+   published (or scheduled) only after approval.
 4. Results are combined into one final answer and remembered.
 Everything is written to memory as it happens, so the dashboard can follow
 along, and a task interrupted by closing the app is marked as such on restart.
@@ -36,6 +38,7 @@ from ..workspace import Services, Workspace, WorkspaceError, git, registry
 from .agents import AGENTS, available_agents, get_agent
 from .coder import run_coder
 from .store_manager import run_store_manager
+from .social_publisher import build_toolbox as build_social_toolbox, run_social_publisher
 from .tech_manager import build_toolbox, run_tech_manager
 from .jsonutil import extract_json
 from .permissions import requires_approval
@@ -70,6 +73,12 @@ STORES_NOTE = """Connected online stores: {stores}. The "store_manager" agent ca
 WORKSPACE_NOTE = """The user attached the project folder "{name}". The "coder" agent can list, read and search its files, propose edits (the user approves each change as a diff), use git (commit, push, pull requests after approval), run the project's allowed commands and check Vercel deployments. Give any step that needs the project to "coder", in ONE step when possible."""
 
 TECH_NOTE = """The "tech_manager" agent checks {targets}: security (HTTPS, headers, exposed files, leaked keys, vulnerable code and packages), errors, speed and technical SEO, and proposes fixes for approval. Give checks, security reviews, bug hunting and technical fixes to "tech_manager"{others}."""
+
+SOCIAL_NOTE = """Connected social accounts: {accounts}. The "social_publisher" agent writes posts for them and publishes or schedules them after the user approves, using the user's pictures and store products. Give any step that writes posts to publish on these accounts to "social_publisher", in ONE step; "writer" only drafts text that is not published."""
+
+# short requests that sound like publishing go through the planner too
+SOCIAL_HINT = re.compile(r"انشر|نشر|منشور|بوست|ستوري|إنستغرام|انستغرام|انستقرام|إنستا|انستا|فيسبوك|فيس بوك|"
+                         r"post|instagram|facebook|schedule|جدول", re.I)
 
 # short requests that sound like a technical check go through the planner, which can pick the technical manager
 TECH_HINT = re.compile(r"ثغر|أمان|امان|حماي|افحص|فحص|اخطاء|أخطاء|خطأ|سرعة|بطيء|security|vulnerab|audit|scan|bug|hack|اختراق", re.I)
@@ -143,12 +152,16 @@ def _lessons_text(lessons: list[dict]) -> tuple[list[str], str]:
 
 
 class Orchestrator:
-    def __init__(self, memory: Memory, router: Router, settings, keystore=None, stores=None):
+    def __init__(self, memory: Memory, router: Router, settings, keystore=None, stores=None, social=None,
+                 media=None, publisher=None):
         self.memory = memory
         self.router = router
         self.settings = settings
         self.keystore = keystore
         self.stores = stores
+        self.social = social        # integrations.social.SocialAccounts
+        self.media = media          # media.MediaLibrary
+        self.publisher = publisher  # integrations.publisher.SocialPublisher
         self.github_api = GITHUB_API
         self.vercel_api = VERCEL_API
         self.site_auditor = None  # audit.SiteAuditor; None = live checks over the network
@@ -294,8 +307,9 @@ class Orchestrator:
             coder_in_project = ws is not None and agent.key == "coder"
             store_step = agent.key == "store_manager"
             tech_step = agent.key == "tech_manager"
+            social_step = agent.key == "social_publisher"
             # tool agents propose their actions; the approval comes after they work, on the real proposals
-            if step["needs_confirmation"] and not (coder_in_project or store_step or tech_step):
+            if step["needs_confirmation"] and not (coder_in_project or store_step or tech_step or social_step):
                 approved = self._wait_for_approval(task_id, step_id)
                 self._take_decision(step_id)
                 if approved is None:
@@ -318,10 +332,13 @@ class Orchestrator:
                     return
                 results.append((step, outcome))
                 continue
-            if store_step or tech_step:
+            if store_step or tech_step or social_step:
                 if tech_step:
                     outcome = self._run_tech_step(task_id, step_id, agent, step, request, history, results,
                                                   lessons, speak, ws, job.store)
+                elif social_step:
+                    outcome = self._run_social_step(task_id, step_id, agent, step, request, history, results,
+                                                    lessons, speak, job.store)
                 else:
                     outcome = self._run_store_step(task_id, step_id, agent, step, request, history, results,
                                                    lessons, speak, job.store)
@@ -359,6 +376,8 @@ class Orchestrator:
             found.add("stores")
         if ws is not None:
             found.add("workspace")
+        if self.social and self.social.entries():
+            found.add("social")
         return frozenset(found)
 
     def _plan(self, request: str, history: list[dict], lessons: list[dict],
@@ -369,6 +388,8 @@ class Orchestrator:
         obvious = ws is not None or store is not None or "stores" not in connected
         if obvious and connected and TECH_HINT.search(request):
             obvious = False  # "افحص متجري" belongs to the technical manager, which the planner picks
+        if obvious and "social" in connected and SOCIAL_HINT.search(request):
+            obvious = False  # "انشر عرض العود" belongs to the social publisher
         if len(request) <= SHORT_REQUEST and "\n" not in request and obvious:
             return [{"agent": default, "instruction": request,
                      "needs_confirmation": requires_approval(request, False)}]
@@ -389,7 +410,11 @@ class Orchestrator:
                 picked = self.stores.find(store)
                 if picked:
                     system += f'\nThe user picked the store "{picked["name"]}" for this request.'
-        if connected:
+        if "social" in connected:
+            accounts = ", ".join(f'"{e["name"]}"' + (f' (+ Instagram @{e["ig_username"]})' if e.get("ig_id") else "")
+                                 for e in self.social.entries())
+            system += "\n\n" + SOCIAL_NOTE.format(accounts=accounts)
+        if connected - {"social"}:
             targets = " and ".join(t for t in (("the connected stores and their live sites" if "stores" in connected else ""),
                                                (f'the project folder "{ws.name}"' if ws else "")) if t)
             others = []
@@ -470,6 +495,19 @@ class Orchestrator:
             return None
         return self._finish_tool_step(task_id, step_id, res, toolbox.change_list(), toolbox.action_list(), ws, services)
 
+    def _run_social_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                         history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                         speak: bool, store: str | None) -> str | None:
+        """Posts written with the social tools, then approval before anything is published."""
+        system = self._system(agent, lessons, speak, social=True)
+        toolbox = build_social_toolbox(self.social, self.memory, self.media, self.stores, store)
+        try:
+            res = run_social_publisher(self.router, toolbox, system, self._step_parts(step, request, history, results))
+        except NoModelError as e:
+            self._fail_step(task_id, step_id, e)
+            return None
+        return self._finish_tool_step(task_id, step_id, res, [], toolbox.action_list())
+
     def _run_coder_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
                         history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
                         speak: bool, ws: Workspace) -> str | None:
@@ -508,6 +546,7 @@ class Orchestrator:
         pending = self.memory.get_changes(step_id, "pending")
         pending_actions = self.memory.get_actions(step_id, "pending")
         had_store = any(a["kind"].startswith("store_") for a in pending_actions)
+        had_social = any(a["kind"].startswith("social_") for a in pending_actions)
         if approved is None:
             for c in pending:
                 self.memory.update_change(c["id"], "rejected", "أُلغيت المهمة")
@@ -520,6 +559,9 @@ class Orchestrator:
             for a in pending_actions:
                 self.memory.update_action(a["id"], "rejected")
             only_store = had_store and not pending and all(a["kind"].startswith("store_") for a in pending_actions)
+            only_social = had_social and not pending and all(a["kind"].startswith("social_") for a in pending_actions)
+            if only_social:
+                return output + "\n\n**المنشورات:** رفضها المستخدم، ولم يُنشر شيء."
             return output + "\n\n" + ("**تغييرات المتجر:** رفضها المستخدم، ولم يتغيّر شيء." if only_store
                                       else "**التعديلات:** رفضها المستخدم، ولم يُنفَّذ شيء.")
         chosen = []
@@ -528,18 +570,21 @@ class Orchestrator:
                 self.memory.update_action(a["id"], "rejected", "استبعدتها من الموافقة")
             else:
                 chosen.append(a)
-        git_actions = [a for a in chosen if not a["kind"].startswith("store_")]
         store_actions = [a for a in chosen if a["kind"].startswith("store_")]
+        social_actions = [a for a in chosen if a["kind"].startswith("social_")]
+        git_actions = [a for a in chosen if a not in store_actions and a not in social_actions]
         applied, summary = self._apply_changes(ws, pending) if pending and ws else ([], "")
         if summary:
             output += "\n\n" + summary
-        if scope == "files" and (git_actions or store_actions):
-            for a in git_actions + store_actions:
+        if scope == "files" and (git_actions or store_actions or social_actions):
+            for a in git_actions + store_actions + social_actions:
                 self.memory.update_action(a["id"], "rejected", "اخترت تطبيق الملفات فقط")
             if git_actions:
                 output += "\n\n**git:** لم يُنفَّذ (اخترت تطبيق الملفات فقط)."
             if store_actions:
                 output += "\n\n**المتجر:** لم يتغيّر (اخترت تطبيق الملفات فقط)."
+            if social_actions:
+                output += "\n\n**المنشورات:** لم يُنشر شيء (اخترت تطبيق الملفات فقط)."
             return output
         if git_actions:
             if pending and not applied:
@@ -552,7 +597,33 @@ class Orchestrator:
             output += "\n\n" + self._run_store_actions(store_actions)
         elif had_store and not pending:
             output += "\n\n**المتجر:** لم تختر أي تغيير."
+        if social_actions:
+            output += "\n\n" + self._run_social_actions(task_id, social_actions)
+        elif had_social and not pending:
+            output += "\n\n**المنشورات:** لم تختر أي منشور."
         return output
+
+    def _run_social_actions(self, task_id: int, actions: list[dict]) -> str:
+        """Each approved post is published (or scheduled) on its own; one failure does not stop the others."""
+        lines = []
+        for action in actions:
+            p = action["payload"]
+            try:
+                if action["kind"] == "social_post":
+                    done, failures = self.publisher.publish(p, task_id, action["id"])
+                    lines += done
+                    status = "failed" if failures and failures >= len(p.get("platforms") or [1]) else "done"
+                    self.memory.update_action(action["id"], status, "\n".join(done)[:1000])
+                elif action["kind"] == "social_cancel":
+                    note = self.publisher.cancel(p["post_id"])
+                    self.memory.update_action(action["id"], "done", note)
+                    lines.append(f"- {note}")
+                else:
+                    raise ProviderError(f"إجراء غير معروف: {action['kind']}")
+            except (ProviderError, ValueError, KeyError) as e:
+                self.memory.update_action(action["id"], "failed", str(e)[:500])
+                lines.append(f"- تعذّر تنفيذ «{p.get('title') or p.get('account') or '?'}»: {e}")
+        return "**المنشورات:**\n" + "\n".join(lines)
 
     def _run_store_actions(self, actions: list[dict]) -> str:
         """Each approved product change runs on its own; one failure does not stop the others."""

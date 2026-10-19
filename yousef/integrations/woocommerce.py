@@ -72,6 +72,7 @@ class WooCommerce:
             "tags": [t.get("name") for t in p.get("tags") or []],
             "description": p.get("description"), "images": len(p.get("images") or []),
             "sale_from": p.get("date_on_sale_from") or "", "sale_to": p.get("date_on_sale_to") or "",
+            "image_urls": [i["src"] for i in p.get("images") or [] if isinstance(i, dict) and i.get("src")][:6],
         }
 
     def all_products(self, limit: int = 250) -> list[dict]:

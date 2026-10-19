@@ -85,6 +85,26 @@ CREATE TABLE IF NOT EXISTS actions(
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS actions_step ON actions(step_id);
+CREATE TABLE IF NOT EXISTS social_posts(
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER,
+    action_id INTEGER,
+    account_id TEXT NOT NULL,
+    account TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    text TEXT NOT NULL,
+    images TEXT NOT NULL DEFAULT '[]',
+    link TEXT,
+    scheduled_at REAL,
+    native INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    remote_id TEXT,
+    url TEXT,
+    error TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS social_due ON social_posts(status, scheduled_at);
 """
 
 ACTIVE_STATUSES = ("planning", "running", "waiting")
@@ -95,6 +115,9 @@ _TASK_FIELDS = {"status", "final", "error", "feedback"}
 _STEP_FIELDS = {"status", "output", "provider", "model", "error", "started_at", "finished_at", "trace"}
 CHANGE_STATUSES = ("pending", "applied", "rejected", "conflict", "error")
 ACTION_STATUSES = ("pending", "done", "rejected", "failed", "skipped", "conflict")
+# scheduled: waiting for its time (Yousef publishes it, or Facebook when native); missed: Yousef was off at the time
+POST_STATUSES = ("scheduled", "publishing", "published", "failed", "cancelled", "missed")
+_POST_FIELDS = {"status", "remote_id", "url", "error", "scheduled_at", "native", "action_id"}
 
 _DIACRITICS = re.compile(r"[ً-ْـ]")
 _TOKEN = re.compile(r"\w{3,}")
@@ -241,6 +264,10 @@ class Memory:
                 "UPDATE steps SET status = 'skipped' WHERE status IN ('pending', 'running', 'awaiting_approval') "
                 "AND task_id IN (SELECT id FROM tasks WHERE status = 'interrupted')"
             )
+            # a post cut off mid-publish may or may not be online: never retry it blindly
+            self._db.execute(
+                "UPDATE social_posts SET status = 'failed', updated_at = ?, error = ? WHERE status = 'publishing'",
+                (now, "انقطع النشر عند إغلاق يوسف؛ تحقّق من الحساب قبل إعادة المحاولة"))
             self._db.commit()
             return cur.rowcount
 
@@ -343,6 +370,64 @@ class Memory:
             self._db.execute("UPDATE changes SET status = ?, note = ? WHERE id = ?", (status, note or None, change_id))
             self._db.commit()
 
+    # ---- social posts ------------------------------------------------------
+    def add_social_post(self, account_id: str, account: str, platform: str, text: str, images: list,
+                        status: str, task_id: int | None = None, action_id: int | None = None,
+                        link: str | None = None, scheduled_at: float | None = None, native: bool = False,
+                        remote_id: str | None = None, url: str | None = None, error: str | None = None) -> int:
+        if status not in POST_STATUSES:
+            raise ValueError(f"status must be one of {POST_STATUSES}")
+        now = time.time()
+        with self._lock:
+            cur = self._db.execute(
+                "INSERT INTO social_posts(task_id, action_id, account_id, account, platform, text, images, link, "
+                "scheduled_at, native, status, remote_id, url, error, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (task_id, action_id, account_id, account, platform, text, json.dumps(images, ensure_ascii=False), link,
+                 scheduled_at, int(native), status, remote_id, url, error, now, now))
+            self._db.commit()
+            return int(cur.lastrowid)
+
+    def update_social_post(self, post_id: int, **fields) -> None:
+        unknown = set(fields) - _POST_FIELDS
+        if unknown:
+            raise ValueError(f"unknown fields: {unknown}")
+        if "status" in fields and fields["status"] not in POST_STATUSES:
+            raise ValueError(f"status must be one of {POST_STATUSES}")
+        sets = ", ".join(f"{k} = ?" for k in fields) + ", updated_at = ?"
+        with self._lock:
+            self._db.execute(f"UPDATE social_posts SET {sets} WHERE id = ?", (*fields.values(), time.time(), post_id))
+            self._db.commit()
+
+    def claim_social_post(self, post_id: int, from_status: str = "scheduled") -> bool:
+        """Mark a post as being published, unless another thread got there first."""
+        with self._lock:
+            cur = self._db.execute("UPDATE social_posts SET status = 'publishing', updated_at = ? WHERE id = ? AND status = ?",
+                                   (time.time(), post_id, from_status))
+            self._db.commit()
+            return cur.rowcount == 1
+
+    def get_social_post(self, post_id: int) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM social_posts WHERE id = ?", (post_id,)).fetchone()
+        return _post(row) if row else None
+
+    def list_social_posts(self, statuses: tuple | None = None, limit: int = 50) -> list[dict]:
+        query, args = "SELECT * FROM social_posts", []
+        if statuses:
+            query += f" WHERE status IN ({', '.join('?' for _ in statuses)})"
+            args = list(statuses)
+        query += " ORDER BY COALESCE(scheduled_at, created_at) DESC, id DESC LIMIT ?"
+        with self._lock:
+            rows = self._db.execute(query, (*args, limit)).fetchall()
+        return [_post(r) for r in rows]
+
+    def due_social_posts(self, now: float) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM social_posts WHERE status = 'scheduled' AND scheduled_at <= ? "
+                                    "ORDER BY scheduled_at, id", (now,)).fetchall()
+        return [_post(r) for r in rows]
+
     # ---- conversation ------------------------------------------------------
     def add_message(self, role: str, content: str, task_id: int | None = None) -> None:
         if role not in ("user", "assistant"):
@@ -434,3 +519,10 @@ def _loads(text):
         return json.loads(text)
     except ValueError:
         return None
+
+
+def _post(row) -> dict:
+    d = dict(row)
+    d["images"] = _loads(d["images"]) or []
+    d["native"] = bool(d["native"])
+    return d

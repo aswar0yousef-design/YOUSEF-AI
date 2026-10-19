@@ -39,7 +39,11 @@ class FakeShopify(_Server):
             "gid://shopify/Product/1": {"id": "gid://shopify/Product/1", "title": "بخور العود الملكي", "handle": "oud",
                                         "status": "ACTIVE", "vendor": "بيت البخور", "productType": "بخور",
                                         "tags": ["عود"], "totalInventory": 12, "descriptionHtml": "<p>بخور فاخر</p>",
-                                        "featuredMedia": {"id": "gid://shopify/MediaImage/1"},
+                                        "featuredMedia": {"id": "gid://shopify/MediaImage/1", "preview": {"image": {
+                                            "url": "https://cdn.shopify.com/s/files/oud.png"}}},
+                                        "media": {"nodes": [
+                                            {"preview": {"image": {"url": "https://cdn.shopify.com/s/files/oud.png"}}},
+                                            {"preview": {"image": {"url": "https://cdn.shopify.com/s/files/oud-box.jpg"}}}]},
                                         "seo": {"title": "", "description": ""},
                                         "options": [{"id": "gid://shopify/ProductOption/1", "name": "Title",
                                                      "optionValues": [{"name": "Default Title"}]}],
@@ -188,7 +192,7 @@ class FakeWoo(_Server):
         self.products = {7: {"id": 7, "name": "لبان حوجري", "status": "publish", "regular_price": "5.000", "price": "5.000",
                              "sale_price": "", "sku": "LUBAN", "stock_quantity": 30, "stock_status": "instock",
                              "categories": [{"name": "لبان"}], "tags": [], "description": "لبان عماني",
-                             "images": [{"id": 1}], "date_on_sale_from": None, "date_on_sale_to": None}}
+                             "images": [{"id": 1, "src": "https://luban.example/wp-content/uploads/luban.jpg"}], "date_on_sale_from": None, "date_on_sale_to": None}}
         self.coupons = {}
         self.system = {
             "environment": {"version": "9.8.0", "wp_version": "6.4.2", "php_version": "7.4.33", "wp_debug_mode": True},

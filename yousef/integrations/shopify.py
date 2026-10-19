@@ -18,7 +18,7 @@ API_VERSION = "2026-10"  # latest stable on 2026-10-19; each version is supporte
 PAGE = 50
 
 _PRODUCT_FIELDS = """id title handle status vendor productType tags totalInventory updatedAt
-featuredMedia { id } seo { title description }
+featuredMedia { id preview { image { url } } } seo { title description }
 variants(first: 10) { nodes { id title price compareAtPrice sku inventoryQuantity } }"""
 _DISCOUNT_FIELDS = "title status startsAt endsAt summary"
 _DISCOUNT_TYPES = ("DiscountCodeBasic", "DiscountAutomaticBasic", "DiscountCodeBxgy", "DiscountAutomaticBxgy",
@@ -124,6 +124,9 @@ class Shopify:
                     for v in ((node.get("variants") or {}).get("nodes") or [])]
         first = variants[0] if variants else {}
         seo = node.get("seo") or {}
+        featured = node.get("featuredMedia") or {}
+        urls = [((featured.get("preview") or {}).get("image") or {}).get("url")]
+        urls += [((m.get("preview") or {}).get("image") or {}).get("url") for m in (node.get("media") or {}).get("nodes") or []]
         return {
             "id": node.get("id"), "title": node.get("title"), "status": (node.get("status") or "").lower(),
             "vendor": node.get("vendor") or "", "product_type": node.get("productType") or "",
@@ -131,6 +134,7 @@ class Shopify:
             "price": first.get("price"), "sku": first.get("sku", ""), "variants": variants,
             "description": node.get("descriptionHtml"), "images": 1 if node.get("featuredMedia") else 0,
             "seo_title": seo.get("title") or "", "seo_description": seo.get("description") or "",
+            "image_urls": list(dict.fromkeys(u for u in urls if u)),
         }
 
     def all_products(self, limit: int = 250) -> list[dict]:
@@ -159,8 +163,8 @@ class Shopify:
         return [self._product(n) for n in ((data.get("products") or {}).get("nodes") or [])]
 
     def product(self, product_id: str) -> dict:
-        data = self.gql(f"query($id: ID!) {{ product(id: $id) {{ {_PRODUCT_FIELDS} descriptionHtml }} }}",
-                        {"id": product_id})
+        data = self.gql(f"query($id: ID!) {{ product(id: $id) {{ {_PRODUCT_FIELDS} descriptionHtml "
+                        f"media(first: 6) {{ nodes {{ preview {{ image {{ url }} }} }} }} }} }}", {"id": product_id})
         node = data.get("product")
         if not node:
             raise StoreError(f"لم يُعثر على المنتج {product_id}")

@@ -8,9 +8,11 @@ from pathlib import Path
 from .config import Settings, data_dir as default_data_dir
 from .core import Orchestrator
 from .integrations import Stores
+from .integrations.publisher import SocialPublisher
 from .integrations.social import SocialAccounts
 from .integrations.stores import make_client
 from .keystore import KeyStore
+from .media import MediaLibrary
 from .memory import Memory
 from .models import Router
 from .models.router import default_factory
@@ -28,8 +30,11 @@ class App:
     voice: VoiceEngine
     stores: Stores
     social: SocialAccounts
+    media: MediaLibrary
+    publisher: SocialPublisher
 
     def close(self) -> None:
+        self.publisher.stop()
         self.orchestrator.shutdown()
         self.memory.close()
 
@@ -45,6 +50,9 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     router = Router(settings, keystore, factory or default_factory)
     stores = Stores(settings, keystore, store_factory or make_client)
     social = SocialAccounts(settings, keystore, **({"api": meta_api} if meta_api else {}), sleep=meta_sleep)
-    orchestrator = Orchestrator(memory, router, settings, keystore, stores)
+    media = MediaLibrary(root / "media")
+    publisher = SocialPublisher(memory, social, media)
+    orchestrator = Orchestrator(memory, router, settings, keystore, stores, social=social, media=media,
+                                publisher=publisher)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
-    return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social)
+    return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher)

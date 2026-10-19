@@ -65,6 +65,7 @@ def main(argv=None) -> int:
         print("  Note: API keys are only base64-encoded on this OS (DPAPI encryption is Windows-only).")
     print("  Close this window or press Ctrl+C to stop.")
 
+    app.publisher.start()  # publishes Instagram posts scheduled for later
     if app.voice.installed:
         if app.settings.get()["voice"]["preload"]:
             app.voice.load()
