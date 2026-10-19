@@ -45,7 +45,8 @@ class ShopifyTest(unittest.TestCase):
 
     def test_reads(self):
         info = self.shop.info()
-        self.assertEqual((info["name"], info["currency"], info["products"]), ("متجر العطور", "OMR", 1))
+        self.assertEqual((info["name"], info["currency"], info["products"]), ("متجر العطور", "OMR", 2))
+        self.assertEqual(info["site"], "https://oman-oud.com")
         self.assertIn(f"/admin/api/{API_VERSION}/graphql.json", self.fake.requests[0]["path"])
         products = self.shop.products(search="عود")
         self.assertEqual(products[0]["price"], "8.500")
@@ -68,7 +69,7 @@ class ShopifyTest(unittest.TestCase):
         bulk = next(r for r in self.fake.requests if "productVariantsBulkUpdate" in r["query"])
         self.assertEqual(bulk["variables"]["variants"][0]["price"], "12.000")
         self.assertEqual(bulk["variables"]["variants"][0]["inventoryItem"], {"sku": "MB-1"})
-        self.assertEqual(result["url"], f"https://admin.shopify.com/store/127/products/2")  # local fake host
+        self.assertEqual(result["url"], f"https://admin.shopify.com/store/127/products/3")  # local fake host
 
     def test_update_and_errors(self):
         self.shop.update_product("gid://shopify/Product/1", {"title": "بخور العود", "price": "9.000"})

@@ -473,6 +473,19 @@ class Orchestrator:
                     if "description" in p["after"]:
                         changed = (changed + "، " if changed else "") + "الوصف"
                     lines.append(f"- عُدّل «{label}» في {entry['name']} ({changed})")
+                elif kind == "store_create_discount":
+                    out = client.create_discount(p["spec"])
+                    self.memory.update_action(action["id"], "done", out.get("url") or str(out.get("id")))
+                    lines.append(f"- أُنشئ العرض «{label}» في {entry['name']}: {out.get('url') or out.get('id')}")
+                elif kind == "store_end_discount":
+                    out = client.end_discount(p["spec"]["id"])
+                    self.memory.update_action(action["id"], "done", out.get("url") or str(out.get("id")))
+                    lines.append(f"- أُوقف العرض «{label}» في {entry['name']}")
+                elif kind == "store_create_bundle":
+                    out = client.create_bundle(p["spec"])
+                    note = "منشورة" if p["spec"].get("status") == "active" else "مسودة"
+                    self.memory.update_action(action["id"], "done", out.get("url") or str(out.get("id")))
+                    lines.append(f"- أُنشئت الباقة «{label}» في {entry['name']} ({note}): {out.get('url') or out.get('id')}")
                 else:
                     raise ProviderError(f"إجراء غير معروف: {kind}")
             except (ProviderError, ValueError, KeyError) as e:

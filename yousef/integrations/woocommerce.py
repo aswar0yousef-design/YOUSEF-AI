@@ -8,6 +8,8 @@ never fetched into YOUSEF AI.
 from __future__ import annotations
 
 import base64
+import datetime as dt
+import html
 import time
 import urllib.parse
 
@@ -68,8 +70,26 @@ class WooCommerce:
             "sku": p.get("sku") or "", "inventory": p.get("stock_quantity"), "stock_status": p.get("stock_status"),
             "categories": [c.get("name") for c in p.get("categories") or []],
             "tags": [t.get("name") for t in p.get("tags") or []],
-            "description": p.get("description"),
+            "description": p.get("description"), "images": len(p.get("images") or []),
+            "sale_from": p.get("date_on_sale_from") or "", "sale_to": p.get("date_on_sale_to") or "",
         }
+
+    def all_products(self, limit: int = 250) -> list[dict]:
+        out: list[dict] = []
+        per_page = max(1, min(100, limit))  # the same page size on every page keeps the offsets right
+        page = 1
+        while len(out) < limit:
+            rows = self._call("GET", "/products", {"per_page": per_page, "page": page,
+                                                   "orderby": "date", "order": "desc"}) or []
+            out.extend(self._product(p) for p in rows)
+            if len(rows) < per_page:
+                break
+            page += 1
+        return out[:limit]
+
+    def system_status(self) -> dict:
+        """WordPress/WooCommerce/PHP versions, plugins and security flags (needs an admin's key)."""
+        return self._call("GET", "/system_status") or {}
 
     def products(self, search: str | None = None, limit: int = 20) -> list[dict]:
         params = {"per_page": max(1, min(limit, 100)), "orderby": "date", "order": "desc"}
@@ -115,6 +135,10 @@ class WooCommerce:
             body["status"] = "publish" if fields["status"] == "active" else "draft"
         if fields.get("tags") is not None:
             body["tags"] = [{"name": t} for t in fields["tags"]]
+        if fields.get("sale_from") is not None:
+            body["date_on_sale_from"] = fields["sale_from"] or None
+        if fields.get("sale_to") is not None:
+            body["date_on_sale_to"] = fields["sale_to"] or None
         return body
 
     def create_product(self, fields: dict) -> dict:
@@ -125,3 +149,68 @@ class WooCommerce:
     def update_product(self, product_id, fields: dict, variant_id=None) -> dict:
         self._call("PUT", f"/products/{int(product_id)}", body=self._body(fields))
         return {"id": product_id, "url": self.admin_url(product_id)}
+
+    # ---- offers (coupons) -------------------------------------------------------------
+    def discounts(self, limit: int = 25) -> list[dict]:
+        rows = self._call("GET", "/coupons", {"per_page": max(1, min(limit, 50)), "orderby": "date",
+                                              "order": "desc"}) or []
+        now = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        out = []
+        for c in rows:
+            expires = c.get("date_expires")
+            kind = c.get("discount_type")
+            amount = c.get("amount")
+            summary = f"{amount}%" if kind == "percent" else f"{amount} ({kind})"
+            if c.get("product_ids"):
+                summary += f" on {len(c['product_ids'])} products"
+            out.append({
+                "id": c.get("id"), "title": c.get("description") or c.get("code"),
+                "status": "expired" if expires and expires < now else ("active" if c.get("status") == "publish" else c.get("status")),
+                "starts": c.get("date_created"), "ends": expires, "summary": summary, "code": c.get("code"),
+                "method": "code", "used": c.get("usage_count"),
+            })
+        return out
+
+    def create_discount(self, spec: dict) -> dict:
+        if not spec.get("code"):
+            raise StoreError("كوبونات WooCommerce تحتاج كودًا")
+        if spec["kind"] == "percentage":
+            kind = "percent"
+        else:
+            kind = "fixed_product" if spec["product_ids"] else "fixed_cart"
+        body = {"code": spec["code"], "discount_type": kind, "amount": str(spec["value"]),
+                "description": spec["title"], "individual_use": False,
+                "product_ids": [int(p) for p in spec["product_ids"]]}
+        if spec.get("ends"):
+            # WooCommerce ends a coupon at 00:00 of its expiry date, so expire the day after the last day
+            last = dt.date.fromisoformat(spec["ends"][:10])
+            body["date_expires"] = (last + dt.timedelta(days=1)).isoformat() + "T00:00:00"
+        if spec.get("minimum"):
+            body["minimum_amount"] = str(spec["minimum"])
+        if spec.get("usage_limit"):
+            body["usage_limit"] = int(spec["usage_limit"])
+        if spec.get("once_per_customer"):
+            body["usage_limit_per_user"] = 1
+        created = self._call("POST", "/coupons", body=body) or {}
+        return {"id": created.get("id"), "url": self.admin_url(created.get("id"))}
+
+    def end_discount(self, discount_id) -> dict:
+        yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat() + "T00:00:00"
+        self._call("PUT", f"/coupons/{int(discount_id)}", body={"date_expires": yesterday})
+        return {"id": discount_id, "url": self.admin_url(discount_id)}
+
+    # ---- bundles -----------------------------------------------------------------------
+    def bundle_check(self, items: list[dict]) -> dict:
+        return {"native": False, "notes": [
+            "منتج منفصل في WooCommerce: مخزونه غير مرتبط بمخزون مكوّناته، فراقب الكمية بنفسك"]}
+
+    def create_bundle(self, spec: dict, sleep=None) -> dict:
+        lines = "".join(f"<li>{html.escape(str(i['title']))} × {int(i['quantity'])}</li>" for i in spec["items"])
+        description = (spec.get("description") or "") + f"<p>تحتوي الباقة على:</p><ul>{lines}</ul>"
+        body = {"type": "simple", "status": "publish" if spec.get("status") == "active" else "draft",
+                "name": spec["title"], "regular_price": str(spec["price"]), "description": description,
+                "tags": [{"name": "باقة"}]}
+        if spec.get("sku"):
+            body["sku"] = spec["sku"]
+        created = self._call("POST", "/products", body=body) or {}
+        return {"id": created.get("id"), "url": self.admin_url(created.get("id"))}

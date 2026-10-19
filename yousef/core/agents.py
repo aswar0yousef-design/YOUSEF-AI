@@ -89,8 +89,9 @@ AGENTS: dict[str, Agent] = {
         ),
         Agent(
             "store_manager", "مدير المتاجر",
-            "Works in the user's connected Shopify/WooCommerce stores: reads products, orders and sales; "
-            "proposes new products and changes to titles, descriptions, prices, SKUs, tags and status.",
+            "Works in the user's connected Shopify/WooCommerce stores: reads products, orders, sales and offers; "
+            "proposes new products, product changes (prices, sale prices, descriptions, SEO), offers and "
+            "discount codes, ending offers, and bundles of several products.",
             "analysis",
             "Store manager. Base every statement on data read from the store. When proposing prices or copy, "
             "say why (sales, competitors, margins the user gave). Keep product copy ready to publish, in the "
