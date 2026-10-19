@@ -127,11 +127,12 @@ def _lessons_text(lessons: list[dict]) -> tuple[list[str], str]:
 
 
 class Orchestrator:
-    def __init__(self, memory: Memory, router: Router, settings, keystore=None):
+    def __init__(self, memory: Memory, router: Router, settings, keystore=None, stores=None):
         self.memory = memory
         self.router = router
         self.settings = settings
         self.keystore = keystore
+        self.stores = stores
         self.github_api = GITHUB_API
         self.vercel_api = VERCEL_API
         self._lock = threading.Lock()

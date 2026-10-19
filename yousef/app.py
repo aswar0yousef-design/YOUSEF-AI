@@ -7,6 +7,8 @@ from pathlib import Path
 
 from .config import Settings, data_dir as default_data_dir
 from .core import Orchestrator
+from .integrations import Stores
+from .integrations.stores import make_client
 from .keystore import KeyStore
 from .memory import Memory
 from .models import Router
@@ -23,13 +25,15 @@ class App:
     router: Router
     orchestrator: Orchestrator
     voice: VoiceEngine
+    stores: Stores
 
     def close(self) -> None:
         self.orchestrator.shutdown()
         self.memory.close()
 
 
-def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_backend=None) -> App:
+def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_backend=None,
+              store_factory=None) -> App:
     root = Path(data_dir) if data_dir else default_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     settings = Settings(root / "settings.json")
@@ -37,6 +41,7 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     memory = Memory(root / "memory.db")
     memory.mark_interrupted()
     router = Router(settings, keystore, factory or default_factory)
-    orchestrator = Orchestrator(memory, router, settings, keystore)
+    stores = Stores(settings, keystore, store_factory or make_client)
+    orchestrator = Orchestrator(memory, router, settings, keystore, stores)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
-    return App(root, settings, keystore, memory, router, orchestrator, voice)
+    return App(root, settings, keystore, memory, router, orchestrator, voice, stores)

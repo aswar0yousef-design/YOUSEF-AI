@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -21,6 +22,7 @@ from pathlib import Path
 from .config import KEY_NAMES
 
 _ENTROPY = b"YousefAI-keystore-v1"
+STORE_KEY = re.compile(r"store:[0-9a-f]{8}")  # one secret per connected store
 
 
 class KeyStoreError(ValueError):
@@ -143,7 +145,7 @@ class KeyStore:
 
     @staticmethod
     def _check_provider(provider: str) -> None:
-        if provider not in KEY_NAMES:
+        if provider not in KEY_NAMES and not STORE_KEY.fullmatch(provider or ""):
             raise KeyStoreError(f"unknown provider: {provider}")
 
     def set(self, provider: str, key: str) -> None:

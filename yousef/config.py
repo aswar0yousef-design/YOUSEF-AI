@@ -46,6 +46,8 @@ DEFAULT_SETTINGS: dict = {
     "history_turns": 4,
     # project folders the coder may read and propose changes in: [{"name", "path"}]
     "workspaces": [],
+    # connected online stores: [{"id", "name", "platform", "url", "api_version"}]; secrets live in keys.dat
+    "stores": [],
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "small",
@@ -121,7 +123,32 @@ def _validate(merged: dict) -> dict:
     if not isinstance(ctx, int) or not 2048 <= ctx <= 131072:
         raise SettingsError("ollama_ctx must be between 2048 and 131072")
     s["workspaces"] = _validate_workspaces(s.get("workspaces"))
+    s["stores"] = _validate_stores(s.get("stores"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
+
+
+STORE_PLATFORMS = ("shopify", "woocommerce")
+
+
+def _validate_stores(items) -> list:
+    if not isinstance(items, list) or len(items) > 20:
+        raise SettingsError("stores must be a list of at most 20 stores")
+    out, ids = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise SettingsError("each store needs an id, name, platform and url")
+        sid = str(item.get("id") or "")
+        name = str(item.get("name") or "").strip()
+        platform = item.get("platform")
+        url = str(item.get("url") or "").strip()
+        version = str(item.get("api_version") or "").strip()
+        if (len(sid) != 8 or any(c not in "0123456789abcdef" for c in sid) or sid in ids
+                or not 1 <= len(name) <= 60 or platform not in STORE_PLATFORMS or not url or len(url) > 300
+                or len(version) > 20):
+            raise SettingsError("invalid store entry")
+        ids.add(sid)
+        out.append({"id": sid, "name": name, "platform": platform, "url": url, "api_version": version})
+    return out
 
 
 def _validate_workspaces(items) -> list:

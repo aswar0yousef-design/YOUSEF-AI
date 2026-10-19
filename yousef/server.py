@@ -27,6 +27,8 @@ from .core import AGENTS
 from .keystore import KeyStoreError
 from .models import ProviderError
 from .voice import AudioError, VoiceNotInstalled, VoiceNotReady
+from .integrations import StoreError
+from .integrations.stores import sales_summary
 from .workspace import WorkspaceError, registry
 
 log = logging.getLogger("yousef.server")
@@ -244,6 +246,11 @@ class Api:
             ("DELETE", r"/api/workspaces/(.+)", self.remove_workspace),
             ("PUT", r"/api/workspaces/(.+)", self.update_workspace),
             ("GET", r"/api/changes/(\d+)", self.get_change),
+            ("GET", r"/api/stores", self.list_stores),
+            ("POST", r"/api/stores", self.add_store),
+            ("POST", r"/api/stores/([0-9a-f]{8})/test", self.test_store),
+            ("GET", r"/api/stores/([0-9a-f]{8})/summary", self.store_summary),
+            ("DELETE", r"/api/stores/([0-9a-f]{8})", self.remove_store),
             ("GET", r"/api/voice/status", self.voice_status),
             ("POST", r"/api/voice/load", self.voice_load),
             ("POST", r"/api/voice/transcribe", self.voice_transcribe),
@@ -444,3 +451,47 @@ class Api:
         entry = registry.find(self.app.settings, task.get("workspace")) if task else None
         change["workspace"] = entry
         return 200, {"change": change}
+
+    # ---- stores ------------------------------------------------------------------
+    def list_stores(self, query, body):
+        return 200, {"stores": self.app.stores.public()}
+
+    def add_store(self, query, body):
+        platform = body.get("platform")
+        if platform == "woocommerce":
+            key, sec = str(body.get("consumer_key", "")).strip(), str(body.get("consumer_secret", "")).strip()
+            if not key or not sec:
+                raise ApiError(400, "أدخل consumer key وconsumer secret")
+            secret = f"{key}:{sec}"
+        else:
+            secret = str(body.get("token", "")).strip()
+            if not secret:
+                raise ApiError(400, "أدخل Admin API access token")
+        try:
+            entry, info = self.app.stores.add(str(body.get("name", "")), platform, str(body.get("url", "")), secret,
+                                              str(body.get("api_version", "")))
+        except (StoreError, KeyStoreError, SettingsError) as e:
+            raise ApiError(400, str(e)) from None
+        return 201, {"store": entry, "info": info, "stores": self.app.stores.public()}
+
+    def test_store(self, store_id, query, body):
+        try:
+            return 200, {"info": self.app.stores.test(store_id)}
+        except StoreError as e:
+            raise ApiError(502, str(e)) from None
+
+    def store_summary(self, store_id, query, body):
+        entry = self.app.stores.find(store_id)
+        if not entry:
+            raise ApiError(404, "store not found")
+        days = max(1, min(_int(query.get("days", ["30"])[0]), 60))
+        try:
+            orders = self.app.stores.client(entry).orders(days=days)
+        except StoreError as e:
+            raise ApiError(502, str(e)) from None
+        return 200, {"store": entry["name"], "days": days, "summary": sales_summary(orders)}
+
+    def remove_store(self, store_id, query, body):
+        if not self.app.stores.remove(store_id):
+            raise ApiError(404, "store not found")
+        return 200, {"stores": self.app.stores.public()}
