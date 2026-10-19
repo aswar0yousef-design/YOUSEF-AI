@@ -3,17 +3,17 @@
 > اقرأ هذا الملف أولًا في أي محادثة جديدة، وأكمل من "الخطوة التالية" ولا تبدأ من الصفر.
 > قاعدة العمل: بعد كل خطوة عمل يُحدَّث هذا الملف (نسخة في المشروع `claude/yousef-ai-checkpoint.md` ونسخة داخل الكود `CHECKPOINT.md`) ويُرفع commit على GitHub.
 
-آخر تحديث: 2026-10-19 — اكتملت الخطوة 4.1
+آخر تحديث: 2026-10-19 — اكتملت الخطوة 4.2
 
 ## الحالة الحالية
 - المستودع: https://github.com/aswar0yousef-design/YOUSEF-AI (الفرع main). كل خطوة مكتملة = commit.
 - آخر إصدار مُسلَّم: 0.3.0 (`yousef-ai-v0.3.0.zip` + `yousef-ai-0.3.0.vsix`) — النواة + الصوت + المبرمج في المشاريع + VS Code + GitHub وVercel.
-- المرحلة 4 (المتاجر): الخطوة 4.1 مكتملة ومرفوعة؛ التالي 4.2 (وكيل مدير المتاجر).
+- المرحلة 4 (المتاجر): 4.1 و4.2 مكتملتان ومرفوعتان؛ التالي 4.3 (واجهة المتاجر).
 - LayanX يبقى على حاله كمرجع فقط.
 
 ## المرحلة 4 — الخطة (المتاجر)
 - [x] 4.1 موصلات المتاجر (قراءة): سجل متاجر في الإعدادات، رموز كل متجر في keystore، Shopify (Admin GraphQL) وWooCommerce (REST v3): معلومات المتجر، المنتجات، الطلبات بدون بيانات العملاء الشخصية، ملخص المبيعات.
-- [ ] 4.2 وكيل «مدير المتاجر»: حلقة أدوات عامة، أدوات المتجر، اقتراحات إنشاء/تعديل منتج وتغيير سعر (كمسودة افتراضيًا) تظهر قبل/بعد وتُنفَّذ بعد الموافقة فقط.
+- [x] 4.2 وكيل «مدير المتاجر»: حلقة أدوات عامة، أدوات المتجر، اقتراحات إنشاء/تعديل منتج وتغيير سعر (كمسودة افتراضيًا) تظهر قبل/بعد وتُنفَّذ بعد الموافقة فقط.
 - [ ] 4.3 الواجهة: لوحة «المتاجر» في الإعدادات مع اختبار الاتصال، جدول قبل/بعد في بوابة الموافقة، وعرضها في VS Code.
 - [ ] 4.4 تحقق شامل وتغليف 0.4.0.
 
@@ -28,6 +28,14 @@
 - `integrations/stores.py`: `Stores` — `settings.stores` [{id (8 hex)، name، platform، url، api_version}] والسر في keystore باسم `store:<id>`؛ الإضافة تختبر الاتصال أولًا ولا تحفظ إن فشل؛ `sales_summary` (عدد الطلبات، الإيراد لكل عملة، المتوسط، الحالات، أكثر المنتجات مبيعًا).
 - API: `GET/POST /api/stores`، `POST /api/stores/{id}/test`، `GET /api/stores/{id}/summary?days=`، `DELETE /api/stores/{id}`.
 - رسائل خطأ واضحة لـ 401/403/404. الاختبارات: خوادم Shopify وWooCommerce وهمية (`tests/store_fakes.py`) تتحقق أيضًا أن استعلامات الطلبات لا تطلب بيانات العملاء.
+
+## تفاصيل 4.2 (ما بُني)
+- `core/toolloop.py`: حلقة الأدوات العامة (JSON، تقصير النتائج القديمة، حد 16 أداة) — المبرمج (`core/coder.py`) ومدير المتاجر يستخدمانها.
+- `integrations/store_tools.py`: `StoreToolbox` — list_stores، store_info، list_products، get_product (الوصف بدون HTML)، list_orders، sales_summary، propose_product، propose_update. الاقتراحات تُسجَّل فقط (أقصى 25): `store_create_product` و`store_update_product` بحمولة {store_id، store، platform، product_id، variant_id، title، before، after، warnings}. `parse_price` يقبل الأرقام العربية ويتجاهل نص العملة؛ الحقول المسموحة لكل منصة (Shopify: title/description/price/compare_at_price/sku/status/tags/vendor/product_type؛ WooCommerce: title/description/price/sale_price/sku/status/tags). منتج Shopify متعدد المتغيرات يحتاج variant_id لتغيير السعر. عدة اقتراحات لنفس المنتج تُدمج. تحذير عند تغيّر سعر أكثر من 50% أو سعر صفر.
+- `core/store_manager.py` + وكيل `store_manager` مفعّل فقط عند وجود متجر متصل (`agents.NEEDS`)؛ بدون متاجر تذهب خطوته إلى المحلل.
+- المنسّق: `STORES_NOTE` في المخطِّط، خطوة المتجر تتخطى الموافقة المسبقة وتنتظر الموافقة على الاقتراحات الحقيقية؛ التنفيذ مستقل لكل اقتراح، وتعديل المنتج يُتخطى بحالة `conflict` إن تغيّرت قيمه في المتجر بعد الاقتراح. الطلب القصير مع متجر مختار يذهب مباشرة لمدير المتاجر.
+- `decide(..., exclude=[action ids])`: استبعاد اقتراحات محددة من الموافقة (للمتجر والمبرمج). المهام لها عمود `store` (اسم المتجر المختار)؛ `POST /api/tasks` يقبل `store` (اسم أو id)، و`/decision` يقبل `exclude`.
+- الاختبارات: 133 ناجحة، منها تدفق كامل على خوادم Shopify وWooCommerce وهمية (موافقة مع استبعاد، إنشاء كمسودة، تعارض، رفض، طلب قصير بمتجر مختار، بدون متاجر).
 
 ## ملخص ما بُني
 **المرحلة 1 (0.1.0):** بايثون قياسي فقط؛ `start.bat`؛ خادم 127.0.0.1:8765 بحماية Host/Origin وترويسة `X-Yousef-Client` وCSP؛ البيانات في `%LOCALAPPDATA%\YousefAI`؛ مفاتيح DPAPI؛ موجّه نماذج Ollama/Claude/OpenAI/Gemini مع انتقال عند الفشل؛ منسّق (مخطِّط JSON حتى 5 خطوات) ووكلاء: العام، المبرمج، صانع المحتوى، المحلل؛ بوابة موافقة؛ تعلّم بالقواعد والتقييمات؛ لوحة عربية بخط Sakkal Majalla وألوان أبواب مسقط.
@@ -58,4 +66,4 @@
 - عند أي خطأ: إرسال `%LOCALAPPDATA%\YousefAI\yousef.log`.
 
 ## الخطوة التالية
-1. بناء 4.2: حلقة أدوات عامة (من coder.py)، `StoreToolbox` (list_stores، store_info، list_products، get_product، list_orders، sales_summary، propose_product، propose_update)، إجراءات `store_create_product`/`store_update_product` بقيم قبل/بعد تُنفَّذ بعد الموافقة، تفعيل وكيل store_manager.
+1. بناء 4.3: لوحة «المتاجر» في الإعدادات (إضافة متجر Shopify/WooCommerce مع اختبار الاتصال، إزالة)، اختيار المتجر أسفل خانة الطلب، جدول «قبل/بعد» لكل اقتراح مع خانة اختيار (exclude) في بوابة الموافقة، وعرضها في لوحة VS Code.

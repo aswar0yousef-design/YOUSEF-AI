@@ -94,7 +94,7 @@ LESSON_KINDS = ("rule", "success", "failure")
 _TASK_FIELDS = {"status", "final", "error", "feedback"}
 _STEP_FIELDS = {"status", "output", "provider", "model", "error", "started_at", "finished_at", "trace"}
 CHANGE_STATUSES = ("pending", "applied", "rejected", "conflict", "error")
-ACTION_STATUSES = ("pending", "done", "rejected", "failed", "skipped")
+ACTION_STATUSES = ("pending", "done", "rejected", "failed", "skipped", "conflict")
 
 _DIACRITICS = re.compile(r"[ً-ْـ]")
 _TOKEN = re.compile(r"\w{3,}")
@@ -139,6 +139,8 @@ class Memory:
             self._db.execute("ALTER TABLE tasks ADD COLUMN workspace TEXT")
         if "context" not in columns:  # added in 0.3.0: editor context as JSON
             self._db.execute("ALTER TABLE tasks ADD COLUMN context TEXT")
+        if "store" not in columns:  # added in 0.4.0: store the user picked, by name
+            self._db.execute("ALTER TABLE tasks ADD COLUMN store TEXT")
         step_columns = {r["name"] for r in self._db.execute("PRAGMA table_info(steps)").fetchall()}
         if "trace" not in step_columns:  # added in 0.3.0: tools the agent used, JSON
             self._db.execute("ALTER TABLE steps ADD COLUMN trace TEXT")
@@ -149,15 +151,16 @@ class Memory:
 
     # ---- tasks -------------------------------------------------------------
     def create_task(self, request: str, source: str = "text", workspace: str | None = None,
-                    context: dict | None = None) -> int:
+                    context: dict | None = None, store: str | None = None) -> int:
         if source not in TASK_SOURCES:
             raise ValueError(f"source must be one of {TASK_SOURCES}")
         now = time.time()
         with self._lock:
             cur = self._db.execute(
-                "INSERT INTO tasks(request, status, source, workspace, context, created_at, updated_at) "
-                "VALUES (?, 'planning', ?, ?, ?, ?, ?)",
-                (request, source, workspace, json.dumps(context, ensure_ascii=False) if context else None, now, now),
+                "INSERT INTO tasks(request, status, source, workspace, context, store, created_at, updated_at) "
+                "VALUES (?, 'planning', ?, ?, ?, ?, ?, ?)",
+                (request, source, workspace, json.dumps(context, ensure_ascii=False) if context else None, store,
+                 now, now),
             )
             self._db.commit()
             return int(cur.lastrowid)

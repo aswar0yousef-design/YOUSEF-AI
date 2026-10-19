@@ -24,6 +24,9 @@ NO_TOOLS = ("In this version you have no tools: you cannot publish, send message
             "browse the web, read the user's files or control the computer.")
 PROJECT_TOOLS = ("For this step you can work in the user's project folder \"{name}\" through the tools described below. "
                  "You still cannot publish, send messages, buy, trade, browse the web or control the computer.")
+STORE_TOOLS = ("For this step you can read the user's connected online stores and propose product changes through "
+               "the tools described below. You still cannot delete products, refund or edit orders, publish posts, "
+               "send messages, buy, trade, browse the web or control the computer.")
 
 
 @dataclass(frozen=True)
@@ -36,8 +39,13 @@ class Agent:
     available: bool = True
     phase: int = 1
 
-    def system_prompt(self, rules: list[str], project: str | None = None) -> str:
-        abilities = NO_TOOLS if project is None else PROJECT_TOOLS.format(name=project)
+    def system_prompt(self, rules: list[str], project: str | None = None, stores: bool = False) -> str:
+        if stores:
+            abilities = STORE_TOOLS
+        elif project is not None:
+            abilities = PROJECT_TOOLS.format(name=project)
+        else:
+            abilities = NO_TOOLS
         text = BASE_RULES.format(abilities=abilities) + "\n\nYour role: " + self.prompt
         if rules:
             text += "\n\nUser's saved rules:\n" + "\n".join(f"- {r}" for r in rules)
@@ -79,8 +87,16 @@ AGENTS: dict[str, Agent] = {
             "Analyst. Structure the analysis (tables, pros/cons, priorities) and end with clear recommendations. "
             "Separate what is known from assumptions, and list what data would make the analysis stronger.",
         ),
-        Agent("store_manager", "مدير المتاجر", "Manages Shopify and WooCommerce products and orders.",
-              "analysis", available=False, phase=4),
+        Agent(
+            "store_manager", "مدير المتاجر",
+            "Works in the user's connected Shopify/WooCommerce stores: reads products, orders and sales; "
+            "proposes new products and changes to titles, descriptions, prices, SKUs, tags and status.",
+            "analysis",
+            "Store manager. Base every statement on data read from the store. When proposing prices or copy, "
+            "say why (sales, competitors, margins the user gave). Keep product copy ready to publish, in the "
+            "store's language.",
+            phase=4,
+        ),
         Agent("ads_manager", "مدير الإعلانات", "Plans and manages ad campaigns.",
               "analysis", available=False, phase=5),
         Agent("social_publisher", "ناشر السوشيال", "Publishes and schedules posts on social platforms.",
@@ -93,10 +109,18 @@ AGENTS: dict[str, Agent] = {
 }
 
 
-def available_agents() -> list[Agent]:
-    return [a for a in AGENTS.values() if a.available]
+# agents that also need something connected before the planner may use them
+NEEDS = {"store_manager": "stores"}
 
 
-def get_agent(key: str) -> Agent:
+def available_agents(connected: set[str] | frozenset = frozenset()) -> list[Agent]:
+    return [a for a in AGENTS.values() if a.available and NEEDS.get(a.key, "") in connected | {""}]
+
+
+def get_agent(key: str, connected: set[str] | frozenset = frozenset()) -> Agent:
     agent = AGENTS.get(key)
-    return agent if agent and agent.available else AGENTS["general"]
+    if agent and agent.available and NEEDS.get(agent.key, "") in connected | {""}:
+        return agent
+    if key == "store_manager":
+        return AGENTS["analyst"]  # store questions without a store connected: advice only
+    return AGENTS["general"]

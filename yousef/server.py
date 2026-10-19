@@ -301,8 +301,14 @@ class Api:
             if entry is None:
                 raise ApiError(403, "workspace_not_allowed")
             workspace = entry["name"]
+        store = body.get("store") or None
+        if store is not None:
+            entry = self.app.stores.find(str(store))
+            if entry is None:
+                raise ApiError(404, "المتجر غير موجود")
+            store = entry["id"]
         try:
-            task_id = self.app.orchestrator.submit(str(body.get("request", "")), source, workspace, context)
+            task_id = self.app.orchestrator.submit(str(body.get("request", "")), source, workspace, context, store)
         except ValueError as e:
             raise ApiError(400, str(e)) from None
         return 201, {"task": self.app.memory.get_task(task_id)}
@@ -333,7 +339,10 @@ class Api:
         scope = body.get("scope", "all")
         if scope not in ("all", "files"):
             raise ApiError(400, "scope must be all or files")
-        if not self.app.orchestrator.decide(_int(step_id), approve, scope):
+        exclude = body.get("exclude") or []
+        if not isinstance(exclude, list) or len(exclude) > 100 or not all(isinstance(i, int) for i in exclude):
+            raise ApiError(400, "exclude must be a list of action ids")
+        if not self.app.orchestrator.decide(_int(step_id), approve, scope, exclude):
             raise ApiError(409, "هذه الخطوة لا تنتظر موافقة")
         return 200, {"ok": True}
 

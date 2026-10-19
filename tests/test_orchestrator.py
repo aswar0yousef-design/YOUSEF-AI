@@ -30,8 +30,11 @@ class ParsePlanTest(unittest.TestCase):
         self.assertEqual(steps, [{"agent": "general", "instruction": "do it", "needs_confirmation": False}])
 
     def test_planned_agents_not_assigned(self):
-        steps = parse_plan(plan_json(("store_manager", "update products", False)))
-        self.assertEqual(steps[0]["agent"], "general")
+        self.assertEqual(parse_plan(plan_json(("ads_manager", "run ads", False)))[0]["agent"], "general")
+        # the store manager needs a connected store; without one its work goes to the analyst
+        self.assertEqual(parse_plan(plan_json(("store_manager", "update products", False)))[0]["agent"], "analyst")
+        steps = parse_plan(plan_json(("store_manager", "update products", False)), frozenset({"stores"}))
+        self.assertEqual(steps[0]["agent"], "store_manager")
 
     def test_keyword_overrides_flag(self):
         steps = parse_plan(plan_json(("writer", "انشر المنشور", False)))
