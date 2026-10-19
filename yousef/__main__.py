@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 import threading
+import time
 import urllib.request
 import webbrowser
 from logging.handlers import RotatingFileHandler
@@ -16,13 +17,32 @@ from .app import build_app
 from .server import make_server
 
 
-def _already_running(port: int) -> bool:
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _running_version(port: int) -> str | None:
+    """The version of a YOUSEF AI already serving this port, or None."""
     try:
-        with opener.open(f"http://127.0.0.1:{port}/api/status", timeout=2) as resp:
-            return "version" in json.loads(resp.read().decode("utf-8"))
+        with _LOCAL.open(f"http://127.0.0.1:{port}/api/status", timeout=2) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("version")
+    except Exception:
+        return None
+
+
+def _ask_to_stop(port: int) -> bool:
+    """Ask an older copy (0.6.1 and later) to stop, so the new one can take the port."""
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/system/stop", data=b"{}", method="POST",
+                                 headers={"X-Yousef-Client": "1", "Content-Type": "application/json"})
+    try:
+        with _LOCAL.open(req, timeout=3):
+            pass
     except Exception:
         return False
+    for _ in range(20):
+        time.sleep(0.25)
+        if _running_version(port) is None:
+            return True
+    return False
 
 
 def main(argv=None) -> int:
@@ -49,14 +69,34 @@ def main(argv=None) -> int:
     try:
         server = make_server(app, port)
     except OSError:
-        app.close()
-        if _already_running(port):
+        running = _running_version(port)
+        if running == __version__:
+            app.close()
             print(f"{APP_TITLE} is already running. Opening {url}")
             if not args.no_browser:
                 webbrowser.open(url)
             return 0
-        print(f"Port {port} is busy. Start with another port:  start.bat --port 8780")
-        return 1
+        if running is None:
+            app.close()
+            print(f"Port {port} is busy. Start with another port:  start.bat --port 8780")
+            return 1
+        # an older copy (from the previous folder) still holds the port: the browser would show the old version
+        print(f"  An older {APP_TITLE} (v{running}) is still running; this is v{__version__}.")
+        server = None
+        if _ask_to_stop(port):
+            for _ in range(20):
+                try:
+                    server = make_server(app, port)
+                    break
+                except OSError:
+                    time.sleep(0.25)
+        if server is not None:
+            print("  Stopped it. Starting the new version...")
+        else:
+            app.close()
+            print("  Close the window of the old version (or press Ctrl+C in it), then run start.bat again.")
+            print(f"  توجد نسخة أقدم من يوسف (v{running}) تعمل الآن. أغلق نافذتها السوداء، ثم شغّل start.bat من جديد.")
+            return 1
 
     print(f"\n  {APP_TITLE} v{__version__}")
     print(f"  Dashboard: {url}")

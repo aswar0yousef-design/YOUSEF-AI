@@ -16,6 +16,7 @@ import re
 import socket
 import socketserver
 import sys
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -213,7 +214,14 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
             body = (WEB_DIR / name).read_bytes()
             self._send(200, body, ctype, {"Content-Security-Policy": CSP, "Cache-Control": "no-cache"})
 
-    return Server((host, port), Handler)
+    server = Server((host, port), Handler)
+
+    def stop():
+        server.shutdown()
+        server.server_close()  # free the port for the copy that asked
+
+    api.on_stop = stop
+    return server
 
 
 def _clean_context(raw) -> dict:
@@ -249,8 +257,10 @@ def _int(value: str) -> int:
 class Api:
     def __init__(self, app):
         self.app = app
+        self.on_stop = None  # set by make_server: shuts this server down
         self.routes = [
             ("GET", r"/api/status", self.status),
+            ("POST", r"/api/system/stop", self.stop),
             ("GET", r"/api/agents", self.agents),
             ("GET", r"/api/tasks", self.list_tasks),
             ("POST", r"/api/tasks", self.create_task),
@@ -318,6 +328,13 @@ class Api:
             "keys_encrypted": self.app.keystore.secure,
             "data_dir": str(self.app.data_dir),
         }
+
+    def stop(self, query, body):
+        """A newer copy asks this one to step aside (start.bat after an update)."""
+        if self.on_stop is None:
+            raise ApiError(404, "not found")
+        threading.Timer(0.3, self.on_stop).start()
+        return 200, {"stopping": True, "version": __version__}
 
     def agents(self, query, body):
         return 200, {"agents": [dict(a.public(), needs=list(NEEDS.get(a.key, ()))) for a in AGENTS.values()]}

@@ -162,6 +162,18 @@ class SocialApiTest(SocialBase):
         conn.close()
         return resp.status, out
 
+    def test_stop_for_update(self):
+        self.assertEqual(self.call("POST", "/api/system/stop")[0], 200)
+        import time as _t
+        for _ in range(40):
+            _t.sleep(0.05)
+            try:
+                self.call("GET", "/api/status")
+            except OSError:
+                break
+        else:
+            self.fail("server still answering after stop")
+
     def test_routes(self):
         status, out = self.call("POST", "/api/social", {"token": "EAAbad"})
         self.assertEqual(status, 400)

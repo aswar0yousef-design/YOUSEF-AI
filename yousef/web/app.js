@@ -912,6 +912,7 @@ function renderWorkspaces() {
     ul.appendChild(li);
   }
   fillWorkspacePicker();
+  renderConnect();
 }
 
 async function loadWorkspaces() {
@@ -952,6 +953,7 @@ function renderStores() {
     ul.appendChild(li);
   }
   fillStorePicker();
+  renderConnect();
 }
 
 function renderSocial() {
@@ -974,6 +976,7 @@ function renderSocial() {
       + `<p class="status-line" role="status"></p>`;
     ul.appendChild(li);
   }
+  renderConnect();
 }
 
 async function loadSocial() {
@@ -1127,6 +1130,14 @@ function agentState(a) {
   return [false, `يحتاج ${needs.map((n) => NEED_LABEL[n] || n).join(" أو ")}`];
 }
 
+// the welcome line names the agents that can work right now
+function renderLede() {
+  const live = state.agents.filter((a) => agentState(a)[0]).map((a) => a.name);
+  if (!live.length) return;
+  const names = live.map((n, i) => (i ? `و${n}` : n)).join("، ");
+  $(".lede").textContent = `اكتب طلبك، وسيقسّمه يوسف إلى خطوات ويوزّعها على وكلائه: ${names}.`;
+}
+
 function renderAgents() {
   const ul = $("#agents");
   ul.replaceChildren();
@@ -1137,6 +1148,25 @@ function renderAgents() {
     li.innerHTML = `<span>${esc(a.name)}</span><span>${esc(label)}</span>`;
     ul.appendChild(li);
   }
+  renderLede();
+}
+
+// open the settings at one panel, with its "add" form unfolded
+async function openPanel(id) {
+  await openDrawer();
+  const panel = document.getElementById(id);
+  if (!panel || els.drawer.hidden) return;
+  const add = panel.querySelector("details");
+  if (add) add.open = true;
+  panel.scrollIntoView({ block: "start" });
+  const field = panel.querySelector("details input, input");
+  if (field) field.focus({ preventScroll: true });
+}
+
+function renderConnect() {
+  const items = [["#connect-stores", state.stores], ["#connect-social", state.social], ["#connect-projects", state.workspaces]];
+  for (const [id, list] of items) $(id).hidden = list.length > 0;
+  $("#connect").hidden = items.every(([id]) => $(id).hidden);
 }
 
 async function openDrawer() {
@@ -1219,6 +1249,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   els.btnSettings.addEventListener("click", openDrawer);
   document.querySelectorAll("[data-open-settings]").forEach((b) => b.addEventListener("click", openDrawer));
+  document.querySelectorAll("[data-open-panel]").forEach((b) => b.addEventListener("click", () => openPanel(b.dataset.openPanel)));
   $("#btn-close").addEventListener("click", closeDrawer);
   els.scrim.addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
@@ -1484,6 +1515,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadWorkspaces();
   await loadStores();
   await loadSocial();
+  renderLede();
+  renderConnect();
+  if (state.status && state.status.version) $("#version-line").textContent = `يوسف ${state.status.version}`;
   if (state.posts.some((p) => p.status === "missed")) {
     showHint("منشور مجدول فات موعده بينما كان يوسف مغلقًا. راجعه من الإعدادات، في «حسابات السوشيال».", true);
   }

@@ -289,6 +289,7 @@ button { cursor: pointer; }
 .presult a { color: var(--door); }
 .add-store { margin-top: 12px; }
 .steps-note { padding-inline-start: 20px; margin: 8px 0; }
+.panel-note.is-warn { color: var(--saffron); font-weight: 600; }
 .steps-note li { margin-bottom: 4px; overflow-wrap: anywhere; }
 .steps-note code { font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; display: inline-block; margin: 1px 0; }
 .add-store > summary { cursor: pointer; color: var(--door); width: fit-content; }
@@ -486,3 +487,11 @@ h4.sub { margin: 14px 0 6px; font-size: 15px; }
 .attached button { font-size: 18px; line-height: 1; padding: 0 6px; }
 .ask-media { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
 .ask-media img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+
+/* first steps on the welcome screen: connect a store, social pages, a project */
+.connect { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin: 18px 0 6px; }
+.connect-item { text-align: start; display: grid; gap: 2px; padding: 10px 14px; border-radius: 12px; border: 1px dashed var(--door); background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; }
+.connect-item strong { color: var(--door); font-size: 15px; }
+.connect-item span { font-size: 13px; color: var(--muted); }
+.connect-item:hover { background: var(--door-tint); }
+.version-line { margin: 14px 0 0; font-size: 12px; color: var(--muted); }

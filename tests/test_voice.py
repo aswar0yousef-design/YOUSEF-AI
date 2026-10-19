@@ -109,7 +109,7 @@ class FakeBackend:
         self.script = list(script or [])
         self.calls = []
 
-    def transcribe(self, clip, language, prompt):
+    def transcribe(self, clip, language, prompt, prompts=None):
         self.calls.append((clip.seconds, language, prompt))
         text = self.script.pop(0) if self.script else "يا يوسف، اكتب منشورًا"
         return text, "ar"
@@ -163,6 +163,7 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(backends[-1].model, "base")
         eng.transcribe(wav())
         self.assertEqual(backends[-1].calls[0][1], "ar")
+        self.assertTrue(backends[-1].calls[0][2].startswith("يا يوسف، اكتب منشورًا"))  # an Arabic sentence
 
     def test_load_error(self):
         eng = VoiceEngine(self.settings, Path(self.dir.name),
@@ -179,7 +180,7 @@ class EngineTest(unittest.TestCase):
     def test_voice_settings_validation(self):
         s = self.settings.update({"voice": {"wake_words": "يوسف، Jarvis"}})
         self.assertEqual(s["voice"]["wake_words"], ["يوسف", "Jarvis"])
-        self.assertEqual(s["voice"]["model"], "small")
+        self.assertEqual(s["voice"]["model"], "large-v3-turbo")
         for bad in ({"model": "huge"}, {"device": "tpu"}, {"language": "fr"}, {"wake_words": []},
                     {"wake_words": ["x"]}, {"preload": "yes"}):
             with self.assertRaises(SettingsError, msg=bad):
@@ -222,6 +223,63 @@ class WhisperBackendTest(unittest.TestCase):
         self.assertLessEqual(float(abs(audio).max()), 1.0)
         self.assertTrue(captured["kw"]["vad_filter"])
         self.assertIsNone(captured["kw"]["language"])
+
+
+    def test_auto_reads_other_languages_as_arabic_or_english(self):
+        calls = []
+
+        class Seg:
+            def __init__(self, text):
+                self.text, self.no_speech_prob, self.avg_logprob = text, 0.1, -0.3
+
+        class WhisperModel:
+            def __init__(self, model, **kw):
+                pass
+
+            def transcribe(self, audio, **kw):
+                calls.append((kw["language"], kw["initial_prompt"]))
+                if kw["language"] is None:  # Gulf Arabic heard as Persian
+                    info = types.SimpleNamespace(language="fa", language_probability=0.41,
+                                                 all_language_probs=[("fa", 0.41), ("ar", 0.38), ("ur", 0.1), ("en", 0.02)])
+                    return iter([Seg(" گیبریش")]), info
+                return iter([Seg(" يا يوسف، كم طلب اليوم؟")]), types.SimpleNamespace(language=kw["language"])
+
+        fake = types.ModuleType("faster_whisper")
+        fake.WhisperModel = WhisperModel
+        texts = engine_mod.prompts(["يوسف", "Yousef"])
+        with mock.patch.dict(sys.modules, {"faster_whisper": fake}):
+            backend = engine_mod.WhisperBackend("large-v3-turbo", "cpu", Path("/tmp/x"))
+            clip = read_wav(wav(1.0))
+            text, lang = backend.transcribe(clip, None, texts["auto"], texts)
+            self.assertEqual((text, lang), ("يا يوسف، كم طلب اليوم؟", "ar"))
+            self.assertEqual(calls, [(None, "يوسف، Yousef."), ("ar", texts["ar"])])
+            calls.clear()
+            backend.transcribe(clip, "en", texts["en"], texts)  # a fixed language is never re-read
+            self.assertEqual(calls, [("en", "Yousef, write an Instagram post about the new offer in the store.")])
+
+
+class GpuFallbackTest(unittest.TestCase):
+    def test_cpu_when_gpu_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            settings = Settings(Path(d) / "s.json")
+            settings.update({"voice": {"device": "cuda"}})
+            made = []
+
+            def factory(model, device, root):
+                if device == "cuda":
+                    raise RuntimeError("Could not load library cudnn_ops64_9.dll")
+                made.append(device)
+                return FakeBackend(model, device, root)
+
+            eng = VoiceEngine(settings, Path(d), backend_factory=factory)
+            eng.load()
+            eng.wait_loaded()
+            status = eng.status()
+            self.assertEqual((status["state"], status["device_used"], made), ("ready", "cpu", ["cpu"]))
+            self.assertIn("install-voice-gpu.bat", status["note"])
+            eng.load()  # same settings: no reload loop
+            eng.wait_loaded()
+            self.assertEqual(made, ["cpu"])
 
 
 class VoiceApiTest(unittest.TestCase):

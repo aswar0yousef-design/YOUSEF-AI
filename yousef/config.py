@@ -52,7 +52,7 @@ DEFAULT_SETTINGS: dict = {
     "social": [],
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
-        "model": "small",
+        "model": "large-v3-turbo",  # small and below misunderstand Arabic too often
         "device": "cpu",
         "language": "auto",
         "wake_words": ["يوسف", "يا يوسف", "Yousef", "Youssef", "Yusuf"],

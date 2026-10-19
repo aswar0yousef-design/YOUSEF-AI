@@ -1,0 +1,4 @@
+# Optional: run speech recognition on an NVIDIA graphics card (installed by install-voice-gpu.bat)
+# CTranslate2 4.x needs CUDA 12 cuBLAS and cuDNN 9; these wheels carry the DLLs, no CUDA install needed.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12>=9,<10

@@ -37,11 +37,20 @@
         <p>لا يوجد نموذج جاهز بعد. شغّل Ollama وثبّت نموذجًا، أو أضف مفتاح API واختر نموذجًا.</p>
         <button type="button" class="ghost" data-open-settings>افتح الإعدادات</button>
       </div>
+      <div class="connect" id="connect" aria-label="اربط حساباتك">
+        <button type="button" class="connect-item" data-open-panel="stores-panel" id="connect-stores">
+          <strong>اربط متجرك</strong><span>Shopify أو WooCommerce: المنتجات والطلبات والعروض والباقات</span></button>
+        <button type="button" class="connect-item" data-open-panel="social-panel" id="connect-social">
+          <strong>اربط صفحاتك</strong><span>فيسبوك وإنستغرام: كتابة المنشورات ونشرها وجدولتها</span></button>
+        <button type="button" class="connect-item" data-open-panel="projects-panel" id="connect-projects">
+          <strong>أضف مجلد مشروع</strong><span>ليعمل المبرمج والمدير التقني على ملفاتك</span></button>
+      </div>
       <div class="examples">
         <button type="button" class="example">اكتب ثلاثة منشورات إنستغرام لإطلاق منتج جديد في متجري، بلهجة قريبة من الجمهور العُماني</button>
         <button type="button" class="example">حلّل نقاط القوة والضعف لمتجر منافس يبيع العطور والبخور، ثم اقترح خطة تسويق لشهر</button>
         <button type="button" class="example">اكتب دالة بايثون تقرأ ملف CSV للمبيعات وتعطيني أعلى خمسة منتجات ربحًا</button>
       </div>
+      <p class="version-line" id="version-line"></p>
     </section>
     <div id="tasks"></div>
   </main>
@@ -195,15 +204,16 @@
       <button type="button" class="ghost" id="btn-voice-load" hidden>حمّل نموذج الصوت الآن</button>
       <label for="voice-model">نموذج التعرّف على الكلام</label>
       <select id="voice-model"></select>
+      <p class="panel-note is-warn" id="voice-model-note" hidden>النماذج الصغيرة تخطئ كثيرًا في العربية، خاصة اللهجة. اختر <bdi dir="ltr">large-v3-turbo</bdi> واحفظ: يُنزَّل مرة واحدة (حوالي 1.6GB)، ثم يأخذ كل أمر بضع ثوانٍ على المعالج، وأقل من ثانية على كرت الشاشة.</p>
       <label for="voice-device">المعالجة على</label>
       <select id="voice-device">
-        <option value="cpu">المعالج (موصى به، يترك كرت الشاشة لـ Ollama)</option>
-        <option value="cuda">كرت الشاشة CUDA (يحتاج مكتبات NVIDIA)</option>
+        <option value="cpu">المعالج (يعمل دائمًا)</option>
+        <option value="cuda">كرت الشاشة NVIDIA (أسرع بكثير؛ شغّل install-voice-gpu.bat مرة واحدة)</option>
       </select>
       <label for="voice-language">لغة الكلام</label>
       <select id="voice-language">
-        <option value="auto">تلقائي: عربي وإنجليزي</option>
-        <option value="ar">العربية فقط</option>
+        <option value="auto">تلقائي: عربي أو إنجليزي</option>
+        <option value="ar">العربية فقط (الأدق إن كنت تتكلم العربية دائمًا)</option>
         <option value="en">الإنجليزية فقط</option>
       </select>
       <label for="voice-wake">كلمات التنبيه، تفصل بينها فاصلة</label>
@@ -214,7 +224,7 @@
 
       <h4 class="sub">قراءة الردود بصوت</h4>
       <label class="check"><input type="checkbox" id="tts-on"> اقرأ ردود الطلبات الصوتية</label>
-      <label class="check"><input type="checkbox" id="tts-online"> اسمح بالأصوات عبر الإنترنت (أوضح، لكن نص الرد يخرج من جهازك)</label>
+      <label class="check"><input type="checkbox" id="tts-online"> اسمح بالأصوات عبر الإنترنت (أوضح بكثير للعربية، لكن نص الرد يخرج من جهازك)</label>
       <label for="tts-ar">الصوت العربي</label>
       <select id="tts-ar"></select>
       <label for="tts-en">الصوت الإنجليزي</label>

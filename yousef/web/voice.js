@@ -69,6 +69,27 @@
     return t;
   }
 
+  // best first: natural (neural) voices, then Gulf and Saudi Arabic, then the rest
+  const GULF = ["ar-om", "ar-ae", "ar-sa", "ar-kw", "ar-qa", "ar-bh"];
+  function voiceRank(x) {
+    const name = (x.name || "").toLowerCase();
+    const lang = (x.lang || "").toLowerCase().replace("_", "-");
+    let score = 0;
+    if (name.includes("natural") || name.includes("neural")) score += 4;
+    if (name.includes("google")) score += 2;
+    const gulf = GULF.indexOf(lang);
+    if (gulf >= 0) score += 2 - gulf * 0.1;
+    if (lang === "en-us" || lang === "en-gb") score += 1;
+    return score;
+  }
+
+  function usableVoices(voices, lang) {
+    const online = store.get("ttsOnline", false);
+    return voices
+      .filter((x) => (x.lang || "").toLowerCase().startsWith(lang) && (online || x.localService))
+      .sort((a, b) => voiceRank(b) - voiceRank(a));
+  }
+
   function chunks(text) {
     const sentences = text.match(/[^.!?؟،\n]+[.!?؟،]*/g) || [text];
     const out = [];
@@ -88,10 +109,8 @@
     supported: "speechSynthesis" in window,
     voices() { return this.supported ? speechSynthesis.getVoices() : []; },
     pick(lang) {
-      const online = store.get("ttsOnline", false);
+      const usable = usableVoices(this.voices(), lang);
       const wanted = store.get(lang === "ar" ? "ttsAr" : "ttsEn", "");
-      const all = this.voices().filter((x) => (x.lang || "").toLowerCase().startsWith(lang));
-      const usable = online ? all : all.filter((x) => x.localService);
       return usable.find((x) => x.name === wanted) || usable[0] || null;
     },
     // Calls done() when finished, or right away if nothing can be spoken.
@@ -566,9 +585,9 @@
   const MODEL_LABEL = {
     tiny: "tiny — الأسرع، دقة ضعيفة",
     base: "base — سريع، دقة مقبولة",
-    small: "small — متوازن (موصى به)",
-    medium: "medium — أدق، أبطأ على المعالج",
-    "large-v3-turbo": "large-v3-turbo — الأدق، يحتاج جهازًا قويًا",
+    small: "small — سريع، ضعيف في العربية",
+    medium: "medium — أدق من small، أبطأ",
+    "large-v3-turbo": "large-v3-turbo — الأدق للعربية (موصى به)",
   };
   const STATE_TEXT = {
     not_installed: "التعرّف على الكلام غير مثبّت. شغّل install-voice.bat مرة واحدة من مجلد يوسف، ثم أعد تشغيله.",
@@ -584,7 +603,9 @@
     let s;
     try { s = await Y.api("GET", "/api/voice/status"); } catch (e) { return; }
     const note = $("#voice-state");
-    note.textContent = STATE_TEXT[s.state] + (s.state === "error" && s.error ? ` ${s.error}` : "");
+    note.textContent = STATE_TEXT[s.state] + (s.state === "error" && s.error ? ` ${s.error}` : "")
+      + (s.state === "ready" && s.device_used ? (s.device_used === "cuda" ? " (على كرت الشاشة)" : " (على المعالج)") : "")
+      + (s.note ? ` ${s.note}` : "");
     note.classList.toggle("is-error", s.state === "error");
     $("#btn-voice-load").hidden = !["idle", "error"].includes(s.state);
     if (s.state === "loading" && !$("#drawer").hidden) statusTimer = setTimeout(refreshVoiceStatus, 1500);
@@ -597,7 +618,7 @@
     for (const [id, lang, key] of [["#tts-ar", "ar", "ttsAr"], ["#tts-en", "en", "ttsEn"]]) {
       const sel = $(id);
       const wanted = store.get(key, "");
-      const list = voices.filter((x) => (x.lang || "").toLowerCase().startsWith(lang) && (online || x.localService));
+      const list = usableVoices(voices, lang);
       sel.replaceChildren();
       const auto = document.createElement("option");
       auto.value = "";
@@ -614,7 +635,8 @@
     const hasAr = voices.some((x) => (x.lang || "").toLowerCase().startsWith("ar") && (online || x.localService));
     $("#tts-note").textContent = !tts.supported
       ? "هذا المتصفح لا يدعم قراءة النص بصوت."
-      : hasAr ? "" : "لا يوجد صوت عربي محلي. في ويندوز: الإعدادات، ثم الوقت واللغة، ثم الكلام، وأضف صوتًا عربيًا. متصفح Edge يوفّر أصواتًا عربية أوضح عبر الإنترنت.";
+      : hasAr ? (online ? "" : "إن كان الصوت العربي آليًا وغير واضح، فعّل «الأصوات عبر الإنترنت» وافتح يوسف في Microsoft Edge: فيه أصوات عربية طبيعية مجانية، منها العُمانية.")
+        : "لا يوجد صوت عربي هنا. الأوضح: افتح يوسف في Microsoft Edge وفعّل «الأصوات عبر الإنترنت» (أصوات طبيعية، منها العُمانية). أو أضف صوتًا عربيًا من ويندوز: الإعدادات، ثم الوقت واللغة، ثم الكلام.";
   }
 
   async function renderSettings() {
@@ -633,12 +655,18 @@
     }
     $("#voice-device").value = voice.device;
     $("#voice-language").value = voice.language;
+    modelNote();
     $("#voice-wake").value = voice.wake_words.join("، ");
     $("#voice-preload").checked = voice.preload;
     $("#voice-status").textContent = "";
     $("#tts-on").checked = store.get("ttsOn", true);
     $("#tts-online").checked = store.get("ttsOnline", false);
     fillVoices();
+  }
+
+  function modelNote() {
+    const weak = ["tiny", "base", "small"].includes($("#voice-model").value);
+    $("#voice-model-note").hidden = !(weak && $("#voice-language").value !== "en");
   }
 
   async function saveVoice() {
@@ -678,6 +706,8 @@
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && tts.speaking) tts.stop(); });
 
     $("#btn-save-voice").addEventListener("click", saveVoice);
+    $("#voice-model").addEventListener("change", modelNote);
+    $("#voice-language").addEventListener("change", modelNote);
     $("#btn-voice-load").addEventListener("click", async () => {
       try { await Y.api("POST", "/api/voice/load"); } catch (e) { Y.showHint(e.message, true); }
       refreshVoiceStatus();
