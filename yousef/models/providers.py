@@ -6,11 +6,31 @@ third-party SDKs to install or keep in sync.
 
 from __future__ import annotations
 
+import logging
 import urllib.parse
 
 from .base import NO_PROXY_OPENER, Provider, ProviderError, http_json, split_system
 
+log = logging.getLogger("yousef.models")
+
 _EMBED_HINTS = ("embed", "bge-", "bge:", "all-minilm", "snowflake-arctic-embed")
+JSON_ONLY = "Respond with a single JSON object only, no other text."
+# models that reason in a separate channel (Ollama returns it as message.thinking)
+_REASONING = ("gpt-oss",)
+REASONING_CTX = 16384  # their hidden reasoning shares the context window with long tool prompts
+
+
+def _is_reasoning(model: str) -> bool:
+    return any(h in model.lower() for h in _REASONING)
+
+
+def _with_instruction(messages: list[dict], text: str) -> list[dict]:
+    out = [dict(m) for m in messages]
+    if out and out[0]["role"] == "system":
+        out[0]["content"] = out[0]["content"].rstrip() + "\n\n" + text
+    else:
+        out.insert(0, {"role": "system", "content": text})
+    return out
 
 
 class OllamaProvider(Provider):
@@ -29,17 +49,38 @@ class OllamaProvider(Provider):
     def chat_models(self) -> list[str]:
         return [m for m in self.list_models() if not any(h in m.lower() for h in _EMBED_HINTS)]
 
-    def chat(self, model, messages, *, json_mode=False):
-        body = {"model": model, "messages": messages, "stream": False,
-                "options": {"temperature": 0.3, "num_ctx": self.num_ctx}}
-        if json_mode:
+    def _call(self, model: str, messages: list[dict], json_format: bool) -> tuple[str, dict]:
+        reasoning = _is_reasoning(model)
+        options = {"temperature": 0.3, "num_ctx": max(self.num_ctx, REASONING_CTX) if reasoning else self.num_ctx}
+        body = {"model": model, "messages": messages, "stream": False, "options": options}
+        if json_format:
             body["format"] = "json"
+        if reasoning:
+            body["think"] = "low"  # gpt-oss cannot switch reasoning off; "low" keeps answers fast
         # First call can be slow while the model loads into GPU memory.
         data = http_json("POST", f"{self.base_url}/api/chat", body=body, timeout=900, opener=NO_PROXY_OPENER) or {}
         message = data.get("message") or {}
         if "content" not in message:
             raise ProviderError(f"Ollama returned no message: {str(data)[:200]}")
-        return message["content"]
+        return message["content"] or "", data
+
+    def chat(self, model, messages, *, json_mode=False):
+        if not json_mode:
+            return self._call(model, messages, False)[0]
+        reasoning = _is_reasoning(model)
+        # gpt-oss writes its answer after a reasoning channel; a JSON grammar from the first token can leave the
+        # answer empty, so it gets the instruction in words instead, like the cloud models
+        content, data = self._call(model, _with_instruction(messages, JSON_ONLY) if reasoning else messages,
+                                   json_format=not reasoning)
+        if content.strip():
+            return content
+        thinking = (data.get("message") or {}).get("thinking") or ""
+        log.warning("%s gave an empty JSON answer (done_reason=%s, reasoning %d chars); asking again in words",
+                    model, data.get("done_reason"), len(thinking))
+        content, data = self._call(model, _with_instruction(messages, JSON_ONLY), json_format=False)
+        if not content.strip() and data.get("done_reason") == "length":
+            raise ProviderError(f"{model} ran out of context (num_ctx {self.num_ctx}); raise it in settings")
+        return content
 
 
 class AnthropicProvider(Provider):

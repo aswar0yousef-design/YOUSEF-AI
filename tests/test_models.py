@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,7 @@ from yousef.config import Settings
 from yousef.keystore import KeyStore
 from yousef.models import NoModelError, Router
 from yousef.models import providers as P
-from yousef.models.base import clean_output, http_json, NO_PROXY_OPENER, split_system
+from yousef.models.base import NO_PROXY_OPENER, ProviderError, clean_output, http_json, split_system
 from yousef.models.router import default_factory
 
 from helpers import FakeOllama, FakeProvider, XorCipher, factory_from
@@ -172,3 +173,66 @@ class RouterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReasoningModelTest(unittest.TestCase):
+    """gpt-oss and empty JSON answers from Ollama."""
+
+    def setUp(self):
+        import threading as _th
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        self.requests = []
+        self.replies = []
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+                outer.requests.append(body)
+                content, reason = outer.replies.pop(0) if outer.replies else ('{"done": "ok"}', "stop")
+                data = json.dumps({"message": {"role": "assistant", "content": content, "thinking": "..."},
+                                   "done": True, "done_reason": reason}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        _th.Thread(target=self.server.serve_forever, daemon=True).start()
+        from yousef.models.providers import OllamaProvider
+        self.provider = OllamaProvider(f"http://127.0.0.1:{self.server.server_port}", 8192)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def test_gpt_oss_gets_words_not_a_grammar(self):
+        msgs = [{"role": "system", "content": "You are a tool user."}, {"role": "user", "content": "go"}]
+        self.replies = [('{"tool": "list_stores"}', "stop")]
+        self.assertEqual(self.provider.chat("gpt-oss:20b", msgs, json_mode=True), '{"tool": "list_stores"}')
+        body = self.requests[0]
+        self.assertNotIn("format", body)
+        self.assertEqual((body["think"], body["options"]["num_ctx"]), ("low", 16384))
+        self.assertIn("single JSON object only", body["messages"][0]["content"])
+        self.assertEqual(msgs[0]["content"], "You are a tool user.")  # the caller's messages are untouched
+        self.provider.chat("gpt-oss:20b", msgs)  # plain chat: reasoning level only
+        self.assertNotIn("single JSON object", self.requests[1]["messages"][0]["content"])
+        self.assertEqual(self.requests[1]["think"], "low")
+
+    def test_empty_json_answer_is_asked_again(self):
+        msgs = [{"role": "user", "content": "go"}]
+        self.replies = [("", "stop"), ('{"done": "تم"}', "stop")]
+        self.assertEqual(self.provider.chat("qwen2.5:7b", msgs, json_mode=True), '{"done": "تم"}')
+        first, second = self.requests
+        self.assertEqual(first["format"], "json")
+        self.assertNotIn("think", first)  # qwen2.5 has no reasoning switch; sending one would be an error
+        self.assertNotIn("format", second)
+        self.assertIn("single JSON object only", second["messages"][0]["content"])
+        self.replies = [("", "length"), ("", "length")]
+        with self.assertRaises(ProviderError) as cm:
+            self.provider.chat("qwen2.5:7b", msgs, json_mode=True)
+        self.assertIn("ran out of context", str(cm.exception))

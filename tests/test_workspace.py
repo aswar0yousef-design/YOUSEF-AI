@@ -209,6 +209,15 @@ class CoderLoopTest(unittest.TestCase):
         res = run_coder(self.router(script), Workspace("proj", self.root), "SYSTEM tool calls", "fix")
         self.assertEqual(res.text, "still not json")
 
+    def test_empty_replies_explain_what_to_do(self):
+        script = Scripted(["", "", ""])
+        res = run_coder(self.router(script), Workspace("proj", self.root), "SYSTEM tool calls", "fix")
+        self.assertIn("لم يُرجع ردًا بالصيغة التي تحتاجها الأدوات", res.text)
+        self.assertIn("qwen2.5:7b", res.text)
+        self.assertEqual(res.notes, ["bad_format"])
+        retry = script.coder_calls[1][-1]["content"]
+        self.assertIn('{"tool": "list_files"', retry)  # the reminder shows a real tool call
+
     def test_tool_limit(self):
         turns = [json.dumps({"tool": "list_files", "path": ""})] * 5 + [json.dumps({"done": "stopped"})]
         res = run_coder(self.router(Scripted(turns)), Workspace("proj", self.root), "SYSTEM tool calls", "x",

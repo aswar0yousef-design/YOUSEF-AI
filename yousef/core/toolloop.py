@@ -51,6 +51,7 @@ def run_tool_loop(router: Router, toolbox, system: str, first_message: str, task
     ]
     result = LoopResult(text="", toolbox=toolbox)
     bad_replies = 0
+    max_bad = 3
     while True:
         completion = router.complete(task_type, messages, json_mode=True)
         result.provider, result.model = completion.provider, completion.model
@@ -60,11 +61,25 @@ def run_tool_loop(router: Router, toolbox, system: str, first_message: str, task
                 raise ValueError("not an object")
         except ValueError:
             bad_replies += 1
-            if bad_replies >= 2:
-                result.text = completion.text.strip() or "لم يُرجع النموذج إجابة قابلة للفهم."
+            log.warning("%s: %s/%s reply is not a JSON tool call (%d/%d): %r", name, completion.provider,
+                        completion.model, bad_replies, max_bad, completion.text[:300])
+            prose = completion.text.strip()
+            if (prose and bad_replies >= 2) or bad_replies >= max_bad:
+                if prose:
+                    result.text = prose  # the model answered in plain words: still an answer
+                else:
+                    result.text = (f"النموذج {completion.model} لم يُرجع ردًا بالصيغة التي تحتاجها الأدوات (JSON)، "
+                                   "فلم أستطع العمل على المتجر أو الملفات. أعد المحاولة، أو اختر نموذجًا محليًا آخر "
+                                   "من الإعدادات (مثل qwen2.5:7b أو qwen3:8b)، أو أضف مفتاح Claude أو OpenAI أو Gemini.")
+                    result.notes.append("bad_format")
                 return result
-            messages.append({"role": "assistant", "content": completion.text[:2000]})
-            messages.append({"role": "user", "content": "Reply with ONE JSON object only, as described."})
+            if completion.text.strip():
+                messages.append({"role": "assistant", "content": completion.text[:2000]})
+            first_tool = next((line for line in str(getattr(toolbox, "help", lambda: "")()).splitlines()
+                               if line.startswith('{"tool"')), "")
+            example = first_tool.split("  ")[0].strip() if first_tool else '{"tool": "..."}'
+            messages.append({"role": "user", "content": "Your reply was not a JSON object. Reply with ONE JSON object "
+                                                        f"only, for example {example} or {{\"done\": \"...\"}}."})
             continue
         if "done" in action:
             done = action["done"]
