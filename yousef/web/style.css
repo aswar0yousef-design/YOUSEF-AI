@@ -261,6 +261,29 @@ button { cursor: pointer; }
 .ws-more { margin-top: 6px; }
 .ws-more summary { cursor: pointer; color: var(--door); font-size: 13px; width: fit-content; }
 
+/* store proposals: one card per product with before/after values */
+.proposals { margin-top: 10px; display: grid; gap: 10px; }
+.proposal { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 10px 14px 12px; }
+.proposal.is-rejected, .proposal.is-skipped { opacity: .6; }
+.proposal header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.phead { display: flex; align-items: baseline; gap: 8px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.phead input { accent-color: var(--door); width: 16px; height: 16px; flex: none; align-self: center; }
+.pkind { font-size: 12px; padding: 0 8px; border-radius: 999px; background: var(--door-tint); flex: none; }
+.pstore { font-size: 13px; color: var(--muted); }
+.ba { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; table-layout: fixed; }
+.ba th, .ba td { padding: 5px 8px; border-top: 1px solid var(--line); text-align: start; vertical-align: top; overflow-wrap: anywhere; }
+.ba thead th { border-top: 0; font-size: 12px; color: var(--muted); font-weight: 600; }
+.ba tbody th { width: 9em; font-weight: 600; }
+.ba td.old { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.ba td.new { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.chip { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); margin: 1px 0; }
+.pwarn { margin: 8px 0 0; font-size: 13px; color: var(--saffron); font-weight: 600; }
+.presult { margin: 8px 0 0; font-size: 13px; }
+.presult a { color: var(--door); }
+.add-store { margin-top: 12px; }
+.add-store > summary { cursor: pointer; color: var(--door); width: fit-content; }
+.row-actions { display: flex; gap: 12px; flex: none; }
+
 .composer-meta { max-width: var(--column); margin: 6px auto 0; display: flex; align-items: center; gap: 12px; }
 .composer-meta .hint { margin: 0; flex: 1; }
 .ws-pick { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
@@ -404,6 +427,9 @@ button { cursor: pointer; }
 .about p { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 
 @media (max-width: 640px) {
+  .ba tbody th { width: 6.5em; }
+  .composer-meta .hint { display: none; }
+  .composer-meta { justify-content: flex-start; flex-wrap: wrap; }
   .bar { position: static; padding: 8px 16px; gap: 8px 10px; }
   .mark-ar { font-size: 30px; }
   .bar-actions .ghost { padding: 4px 10px; font-size: 14px; }

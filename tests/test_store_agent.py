@@ -122,7 +122,7 @@ class ToolboxTest(StoreTestBase):
         self.assertEqual(p["before"], {"price": "8.500", "title": "بخور العود الملكي"})
         self.assertEqual(p["after"], {"price": "2", "title": "بخور العود الملكي الفاخر"})
         self.assertEqual(p["variant_id"], "gid://shopify/ProductVariant/11")
-        self.assertTrue(any("-76%" in w for w in p["warnings"]), p["warnings"])
+        self.assertIn("السعر: انخفاض كبير بنسبة 76%", p["warnings"])
         self.assertIn("No change", self.tb.run({"tool": "propose_update", "store": "بيت العود", "id": SHOP_PID,
                                                 "sku": "OUD-1"}))
         self.tb.run({"tool": "propose_product", "store": "لبان ظفار", "title": "لبان نجدي", "price": "٤٫٥"})
@@ -228,6 +228,14 @@ class AgentFlowTest(StoreTestBase):
         self.assertEqual(self.script.planner_calls, [])  # short request skips the planner
         self.assertIn("2 orders", self.script.store_calls[1][-1]["content"])  # default store was used
         self.assertEqual(task["final"], "طلبان هذا الشهر.")
+
+    def test_short_request_without_pick_uses_planner(self):
+        self.script = Script([{"tool": "sales_summary", "store": "بيت العود"}, {"done": "طلبان."}])
+        self.make_app(self.script)
+        tid = self.app.orchestrator.submit("كم طلب هذا الشهر؟")
+        wait_for(lambda: self.app.memory.get_task(tid)["status"] == "done")
+        self.assertEqual(len(self.script.planner_calls), 1)
+        self.assertEqual(self.app.memory.get_task(tid)["steps"][0]["agent"], "store_manager")
 
     def test_no_stores_no_store_manager(self):
         self.script = Script([], plan={"steps": [{"agent": "store_manager", "instruction": "حلل متجري"}]})

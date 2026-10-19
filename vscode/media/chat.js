@@ -4,7 +4,9 @@
   const vscode = acquireVsCodeApi();
   const $ = (sel) => document.querySelector(sel);
 
-  const AGENTS = { general: "المساعد العام", coder: "المبرمج", writer: "صانع المحتوى", analyst: "المحلل" };
+  const AGENTS = {
+    general: "المساعد العام", coder: "المبرمج", writer: "صانع المحتوى", analyst: "المحلل", store_manager: "مدير المتاجر",
+  };
   const TASK_STATE = {
     planning: "يخطّط…", running: "يعمل…", waiting: "ينتظر موافقتك", failed: "تعثّرت المهمة",
     cancelled: "أُلغيت", interrupted: "توقّفت عند إغلاق يوسف",
@@ -13,7 +15,15 @@
     pending: "في الانتظار", running: "يعمل الآن", awaiting_approval: "ينتظر موافقتك", done: "تم", failed: "تعثّر", skipped: "تُخطّيت",
   };
   const CHANGE_STATUS = { pending: "بانتظار موافقتك", applied: "طُبّق", rejected: "مرفوض", conflict: "تعارض", error: "خطأ" };
-  const ACTION_STATUS = { pending: "بانتظار موافقتك", done: "تم", rejected: "مرفوض", failed: "تعذّر", skipped: "لم يُنفَّذ" };
+  const ACTION_STATUS = {
+    pending: "بانتظار موافقتك", done: "تم", rejected: "مرفوض", failed: "تعذّر", skipped: "لم يُنفَّذ", conflict: "تعارض",
+  };
+  const FIELD_LABEL = {
+    title: "العنوان", description: "الوصف", price: "السعر", compare_at_price: "السعر قبل الخصم",
+    sale_price: "سعر التخفيض", sku: "SKU", status: "الحالة", tags: "الوسوم", vendor: "المورّد", product_type: "النوع",
+  };
+  const PRODUCT_STATUS = { draft: "مسودة", active: "منشور", archived: "مؤرشف" };
+  const unticked = new Set();
   const ACTION_NAME = { git_commit: "commit", git_push: "push", open_pr: "Pull Request" };
   const PROVIDER = { ollama: "محلي", anthropic: "Claude", openai: "OpenAI", gemini: "Gemini" };
   const ACTIVE = new Set(["planning", "running", "waiting"]);
@@ -108,8 +118,43 @@
       + `${c.note ? `<span class="note">${esc(c.note)}</span>` : ""}</li>`).join("")}</ul>`;
   }
 
+  function value(field, v) {
+    if (v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length)) return "—";
+    if (field === "status") return esc(PRODUCT_STATUS[v] || v);
+    if (field === "tags") return esc(v.join("، "));
+    if (field === "description") {
+      const d = document.createElement("div");
+      d.innerHTML = String(v);
+      const text = (d.textContent || "").replace(/\s+/g, " ").trim();
+      return esc(text.length > 120 ? `${text.slice(0, 120)}…` : text);
+    }
+    return `<bdi>${esc(v)}</bdi>`;
+  }
+
+  function proposalsHTML(step) {
+    const items = (step.actions || []).filter((a) => a.kind.startsWith("store_"));
+    if (!items.length) return "";
+    const waiting = step.status === "awaiting_approval";
+    return `<div class="proposals" data-proposals="${step.id}">${items.map((a) => {
+      const p = a.payload || {};
+      const creating = a.kind === "store_create_product";
+      const rows = Object.keys(p.after || {}).map((f) => `<tr><th>${FIELD_LABEL[f] || esc(f)}</th>`
+        + (creating ? `<td class="new">${value(f, p.after[f])}</td>` : `<td class="old">${value(f, (p.before || {})[f])}</td><td class="new">${value(f, p.after[f])}</td>`)
+        + "</tr>").join("");
+      const pick = waiting && a.status === "pending"
+        ? `<input type="checkbox" class="pick" data-action="${a.id}" aria-label="ضمن الموافقة"${unticked.has(a.id) ? "" : " checked"}>` : "";
+      const title = creating ? (p.after || {}).title : p.title;
+      return `<div class="proposal is-${esc(a.status)}"><label class="phead">${pick}<span class="pkind">${creating ? "منتج جديد" : "تعديل"}</span>`
+        + `<strong dir="auto">${esc(title || "")}</strong></label>`
+        + `<div class="pmeta"><span class="muted">${esc(p.store || "")}</span><span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span></div>`
+        + `<table class="ba"><tbody>${rows}</tbody></table>`
+        + (p.warnings || []).map((w) => `<p class="pwarn" dir="auto">تنبيه: ${esc(w)}</p>`).join("")
+        + (a.result ? `<p class="note" dir="auto">${esc(a.result)}</p>` : "") + "</div>";
+    }).join("")}</div>`;
+  }
+
   function actionsHTML(step) {
-    const actions = step.actions || [];
+    const actions = (step.actions || []).filter((a) => !a.kind.startsWith("store_"));
     if (!actions.length) return "";
     return `<ul class="changes actions">${actions.map((a) => {
       const p = a.payload || {};
@@ -133,10 +178,18 @@
         + `</ul></details>`;
     }
     const pending = (step.changes || []).filter((c) => c.status === "pending").length;
-    const pendingActions = (step.actions || []).filter((a) => a.status === "pending");
-    if ((pending || pendingActions.length) && step.output) h += `<div class="md explain">${md(step.output)}</div>`;
-    h += changesHTML(step) + actionsHTML(step);
-    if (step.status === "awaiting_approval") {
+    const pendingAll = (step.actions || []).filter((a) => a.status === "pending");
+    const pendingStore = pendingAll.filter((a) => a.kind.startsWith("store_"));
+    const pendingActions = pendingAll.filter((a) => !a.kind.startsWith("store_"));
+    if ((pending || pendingAll.length) && step.output) h += `<div class="md explain">${md(step.output)}</div>`;
+    h += changesHTML(step) + actionsHTML(step) + proposalsHTML(step);
+    if (step.status === "awaiting_approval" && pendingStore.length && !pending && !pendingActions.length) {
+      const n = pendingStore.length;
+      const count = n === 1 ? "تغييرًا واحدًا" : n === 2 ? "تغييرين" : n <= 10 ? `${n} تغييرات` : `${n} تغييرًا`;
+      h += `<div class="gate"><p>يقترح مدير المتاجر ${count} على المتجر. أزل علامة ما لا تريده، ثم طبّق. لن يتغيّر شيء قبل موافقتك.</p>`
+        + `<div class="row"><button type="button" data-act="approve" data-step="${step.id}">طبّق المحدد</button>`
+        + `<button type="button" class="secondary" data-act="reject" data-step="${step.id}">ارفض الكل</button></div></div>`;
+    } else if (step.status === "awaiting_approval") {
       const parts = [];
       if (pending) parts.push(`تعديل ${countFiles(pending)}`);
       if (pendingActions.length) parts.push(pendingActions.map((a) => ACTION_NAME[a.kind] || a.kind).join(" ثم "));
@@ -218,16 +271,25 @@
     }
   });
 
+  document.addEventListener("change", (e) => {
+    const box = e.target.closest("input.pick");
+    if (!box) return;
+    if (box.checked) unticked.delete(Number(box.dataset.action)); else unticked.add(Number(box.dataset.action));
+  });
+
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
     const act = btn.dataset.act;
     const task = tasks.get(Number(btn.dataset.task));
     if (act === "approve" || act === "reject" || act === "approve-files") {
+      const boxes = [...document.querySelectorAll(`[data-proposals="${btn.dataset.step}"] input.pick`)];
+      const exclude = boxes.filter((b) => !b.checked).map((b) => Number(b.dataset.action));
+      if (act === "approve" && boxes.length && exclude.length === boxes.length) return;
       btn.disabled = true;
       vscode.postMessage({
         type: "decide", stepId: Number(btn.dataset.step), approve: act !== "reject",
-        scope: act === "approve-files" ? "files" : "all",
+        scope: act === "approve-files" ? "files" : "all", exclude,
       });
     } else if (act === "diff") vscode.postMessage({ type: "openDiff", changeId: Number(btn.dataset.change) });
     else if (act === "cancel") vscode.postMessage({ type: "cancel", taskId: Number(btn.dataset.task) });

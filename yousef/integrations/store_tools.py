@@ -147,14 +147,19 @@ def comparable(field: str, value):
     return str(value).strip()
 
 
+PRICE_LABEL = {"price": "السعر", "compare_at_price": "السعر قبل الخصم", "sale_price": "سعر التخفيض"}
+
+
 def price_warnings(before: dict, after: dict) -> list[str]:
+    """Arabic notes shown in the approval card for prices worth a second look."""
     warnings = []
     for field in PRICE_FIELDS:
         if field not in after or after[field] == "":
             continue
         new = Decimal(after[field])
+        label = PRICE_LABEL[field]
         if new == 0:
-            warnings.append(f"{field}: السعر الجديد صفر")
+            warnings.append(f"{label}: القيمة الجديدة صفر")
             continue
         try:
             old = Decimal(str(before.get(field) or ""))
@@ -162,7 +167,8 @@ def price_warnings(before: dict, after: dict) -> list[str]:
             continue
         if old > 0 and abs(new - old) / old > Decimal("0.5"):
             pct = int((new - old) / old * 100)
-            warnings.append(f"{field}: تغيّر كبير ({pct:+d}%)")
+            direction = "ارتفاع" if pct > 0 else "انخفاض"
+            warnings.append(f"{label}: {direction} كبير بنسبة {abs(pct)}%")
     return warnings
 
 

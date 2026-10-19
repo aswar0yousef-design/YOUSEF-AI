@@ -343,7 +343,10 @@ class Orchestrator:
     def _plan(self, request: str, history: list[dict], lessons: list[dict],
               ws: Workspace | None = None, connected: frozenset = frozenset(), store: str | None = None) -> list[dict]:
         default = "coder" if ws else ("store_manager" if store and "stores" in connected else "general")
-        if len(request) <= SHORT_REQUEST and "\n" not in request:
+        # a short request skips the planner, unless stores are connected and none was picked:
+        # "كم طلب اليوم؟" must reach the store manager, which only the planner can decide
+        obvious = ws is not None or store is not None or "stores" not in connected
+        if len(request) <= SHORT_REQUEST and "\n" not in request and obvious:
             return [{"agent": default, "instruction": request,
                      "needs_confirmation": requires_approval(request, False)}]
         agents = "\n".join(f'- "{a.key}": {a.role}' for a in available_agents(connected))

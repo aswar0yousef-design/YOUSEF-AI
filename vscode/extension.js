@@ -115,7 +115,7 @@ class ChatView {
           await this.send(msg.text, { attach: msg.attach });
           break;
         case "decide":
-          await this.client.decide(msg.stepId, msg.approve, msg.scope || "all");
+          await this.client.decide(msg.stepId, msg.approve, msg.scope || "all", msg.exclude || []);
           this.schedulePoll(200);
           break;
         case "cancel":

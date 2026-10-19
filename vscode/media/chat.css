@@ -68,6 +68,20 @@ code, pre { font-family: var(--vscode-editor-font-family); font-size: .92em; }
 .cstatus.is-conflict, .cstatus.is-error, .cstatus.is-rejected { color: var(--vscode-errorForeground); }
 .note { flex-basis: 100%; font-size: 11px; color: var(--vscode-descriptionForeground); }
 
+.proposals { display: grid; gap: 6px; margin-top: 6px; }
+.proposal { padding: 6px 8px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); }
+.proposal.is-rejected { opacity: .6; }
+.phead { display: flex; gap: 6px; align-items: baseline; cursor: pointer; }
+.phead input { align-self: center; }
+.pkind { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.pmeta { display: flex; gap: 8px; font-size: 11px; margin: 2px 0 4px; }
+.ba { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.ba th, .ba td { text-align: start; padding: 2px 4px; vertical-align: top; overflow-wrap: anywhere; }
+.ba th { width: 7em; font-weight: 600; color: var(--vscode-descriptionForeground); }
+.ba td.old { color: var(--vscode-descriptionForeground); text-decoration: line-through; }
+.ba td.new { color: var(--vscode-gitDecoration-addedResourceForeground, #3c9); }
+.pwarn { margin: 4px 0 0; font-size: 12px; color: var(--vscode-editorWarning-foreground); }
+
 .gate { margin-top: 8px; padding: 8px 10px; border-radius: 4px; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder, transparent); }
 .gate p { margin: 0 0 8px; }
 .error { margin-top: 8px; padding: 6px 10px; border-radius: 4px; background: var(--vscode-inputValidation-errorBackground); border: 1px solid var(--vscode-inputValidation-errorBorder, transparent); overflow-wrap: anywhere; }

@@ -19,9 +19,20 @@ const LESSON_KIND = { rule: "قاعدة", success: "أفادت", failure: "لم 
 const TOOL_LABEL = {
   list_files: "عرض مجلد", read_file: "قراءة", search: "بحث", replace: "تعديل مقترح", write_file: "ملف مقترح",
   git_status: "حالة git", git_diff: "فروقات git", run: "تشغيل أمر", vercel_status: "حالة Vercel",
+  list_stores: "عرض المتاجر", store_info: "معلومات المتجر", list_products: "عرض المنتجات", get_product: "قراءة منتج",
+  list_orders: "عرض الطلبات", sales_summary: "ملخص المبيعات", propose_product: "منتج مقترح",
+  propose_update: "تعديل مقترح",
 };
+const FIELD_LABEL = {
+  title: "العنوان", description: "الوصف", price: "السعر", compare_at_price: "السعر قبل الخصم",
+  sale_price: "سعر التخفيض", sku: "SKU", status: "الحالة", tags: "الوسوم", vendor: "المورّد", product_type: "النوع",
+};
+const PRODUCT_STATUS = { draft: "مسودة", active: "منشور", archived: "مؤرشف" };
+const PLATFORM = { shopify: "Shopify", woocommerce: "WooCommerce" };
 const CHANGE_STATUS = { pending: "بانتظار موافقتك", applied: "طُبّق", rejected: "مرفوض", conflict: "تعارض", error: "خطأ" };
-const ACTION_STATUS = { pending: "بانتظار موافقتك", done: "تم", rejected: "مرفوض", failed: "تعذّر", skipped: "لم يُنفَّذ" };
+const ACTION_STATUS = {
+  pending: "بانتظار موافقتك", done: "تم", rejected: "مرفوض", failed: "تعذّر", skipped: "لم يُنفَّذ", conflict: "تعارض",
+};
 const SERVICES = [
   ["github", "GitHub", "لفتح Pull Requests. الرفع (push) يستخدم git المثبّت عندك وصلاحياته."],
   ["vercel", "Vercel", "للقراءة فقط: حالة النشر وأخطاء البناء. النشر نفسه يحدث عند الرفع إلى GitHub."],
@@ -31,6 +42,7 @@ const ACTIVE = new Set(["planning", "running", "waiting"]);
 const $ = (sel, root = document) => root.querySelector(sel);
 const state = {
   tasks: new Map(), open: new Set(), status: null, settings: null, keys: null, agents: [], pollTimer: null, workspaces: [],
+  stores: [], unticked: new Set(),
 };
 
 const store = {
@@ -201,16 +213,29 @@ function stepHTML(step, task, hideOutput) {
       + "</ul></details>";
   }
   const changes = step.changes || [];
-  const actions = step.actions || [];
+  const allActions = step.actions || [];
+  const proposals = allActions.filter((a) => a.kind.startsWith("store_"));
+  const actions = allActions.filter((a) => !a.kind.startsWith("store_"));
   const pendingChanges = changes.filter((c) => c.status === "pending").length;
   const pendingActions = actions.filter((a) => a.status === "pending");
-  if ((pendingChanges || pendingActions.length) && step.output) {
+  const pendingProposals = proposals.filter((a) => a.status === "pending");
+  if ((pendingChanges || pendingActions.length || pendingProposals.length) && step.output) {
     // the agent's explanation comes before the diffs it proposes
     h += `<div class="md explain">${md(step.output)}</div>`;
   }
   if (changes.length) h += changesHTML(changes);
   if (actions.length) h += actionsHTML(actions);
-  if (step.status === "awaiting_approval" && (pendingChanges || pendingActions.length)) {
+  if (proposals.length) h += proposalsHTML(proposals, step);
+  if (step.status === "awaiting_approval" && pendingProposals.length && !pendingChanges && !pendingActions.length) {
+    const updates = pendingProposals.filter((a) => a.kind === "store_update_product").length;
+    const creates = pendingProposals.length - updates;
+    const parts = [];
+    if (updates) parts.push(`تعديل ${countProducts(updates)}`);
+    if (creates) parts.push(`إنشاء ${countProducts(creates)}`);
+    h += `<div class="gate"><p>يقترح ${esc(agentName(step.agent))}: ${parts.join("، و")}. أزل علامة ما لا تريده، ثم طبّق. لن يتغيّر شيء في المتجر قبل موافقتك.</p>`
+      + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">طبّق المحدد</button>`
+      + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفض الكل</button></div>`;
+  } else if (step.status === "awaiting_approval" && (pendingChanges || pendingActions.length)) {
     const parts = [];
     if (pendingChanges) parts.push(`تعديل ${countFiles(pendingChanges)}`);
     const names = { git_commit: "commit", git_push: "push", open_pr: "Pull Request" };
@@ -224,7 +249,7 @@ function stepHTML(step, task, hideOutput) {
       + `<button type="button" class="primary" data-act="approve" data-step="${step.id}">وافق ونفّذ</button>`
       + `<button type="button" class="ghost danger" data-act="reject" data-step="${step.id}">ارفض الخطوة</button></div>`;
   }
-  if (step.output && !hideOutput && !pendingChanges) {
+  if (step.output && !hideOutput && !pendingChanges && !pendingProposals.length) {
     const open = state.open.has(String(step.id)) ? " open" : "";
     h += `<details class="out" data-step="${step.id}"${open}><summary>نتيجة هذه الخطوة</summary><div class="md">${md(step.output)}</div></details>`;
   }
@@ -240,6 +265,64 @@ function diffHTML(diff) {
     else if (line.startsWith("-")) cls = "del";
     return `<span class="${cls}">${esc(line) || " "}</span>`;
   }).join("");
+}
+
+function countProducts(n) {
+  if (n === 1) return "منتج واحد";
+  if (n === 2) return "منتجين";
+  return n <= 10 ? `${n} منتجات` : `${n} منتجًا`;
+}
+
+function countOrders(n) {
+  if (n === 0) return "لا طلبات";
+  if (n === 1) return "طلب واحد";
+  if (n === 2) return "طلبان";
+  return n <= 10 ? `${n} طلبات` : `${n} طلبًا`;
+}
+
+function plainText(html, limit = 160) {
+  const div = document.createElement("div");
+  div.innerHTML = String(html ?? "");
+  const text = (div.textContent || "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function fieldValue(field, value) {
+  if (value === null || value === undefined || value === "") return `<span class="muted">—</span>`;
+  if (field === "status") return esc(PRODUCT_STATUS[value] || value);
+  if (field === "tags") return Array.isArray(value) && value.length ? value.map((t) => `<span class="chip">${esc(t)}</span>`).join(" ") : `<span class="muted">—</span>`;
+  if (field === "description") return `<span dir="auto">${esc(plainText(value))}</span>`;
+  if (["price", "compare_at_price", "sale_price", "sku"].includes(field)) return `<bdi dir="ltr">${esc(value)}</bdi>`;
+  return `<span dir="auto">${esc(value)}</span>`;
+}
+
+function proposalsHTML(proposals, step) {
+  const waiting = step.status === "awaiting_approval";
+  return `<div class="proposals" data-proposals="${step.id}">${proposals.map((a) => {
+    const p = a.payload || {};
+    const creating = a.kind === "store_create_product";
+    const fields = Object.keys(p.after || {});
+    const rows = fields.map((f) => creating
+      ? `<tr><th scope="row">${FIELD_LABEL[f] || esc(f)}</th><td class="new" colspan="2">${fieldValue(f, p.after[f])}</td></tr>`
+      : `<tr><th scope="row">${FIELD_LABEL[f] || esc(f)}</th><td class="old">${fieldValue(f, (p.before || {})[f])}</td><td class="new">${fieldValue(f, p.after[f])}</td></tr>`).join("");
+    const pick = waiting && a.status === "pending"
+      ? `<input type="checkbox" class="pick" data-action="${a.id}" aria-label="ضمن الموافقة"${state.unticked.has(a.id) ? "" : " checked"}>`
+      : "";
+    let result = "";
+    if (a.result) {
+      result = /^https?:\/\/\S+$/.test(a.result)
+        ? `<p class="presult"><a href="${esc(a.result)}" target="_blank" rel="noopener noreferrer">افتحه في المتجر</a></p>`
+        : `<p class="presult cnote" dir="auto">${esc(a.result)}</p>`;
+    }
+    const warn = (p.warnings || []).map((w) => `<p class="pwarn" dir="auto">تنبيه: ${esc(w)}</p>`).join("");
+    const title = creating ? (p.after || {}).title : p.title;
+    return `<article class="proposal is-${esc(a.status)}"><header><label class="phead">${pick}`
+      + `<span class="pkind">${creating ? "منتج جديد" : "تعديل منتج"}</span> <strong dir="auto">${esc(title || "")}</strong></label>`
+      + `<span class="pstore">${esc(p.store || "")} · ${PLATFORM[p.platform] || ""}</span>`
+      + `<span class="cstatus is-${esc(a.status)}">${ACTION_STATUS[a.status] || esc(a.status)}</span></header>`
+      + `<table class="ba"><thead><tr><th scope="col">الحقل</th>${creating ? `<th scope="col" colspan="2">القيمة</th>` : `<th scope="col">قبل</th><th scope="col">بعد</th>`}</tr></thead>`
+      + `<tbody>${rows}</tbody></table>${warn}${result}</article>`;
+  }).join("")}</div>`;
 }
 
 function countFiles(n) {
@@ -312,6 +395,7 @@ function taskHTML(t) {
   const ctx = t.context || {};
   const meta = [];
   if (t.source === "vscode") meta.push("من VS Code");
+  if (t.store) meta.push(`المتجر <bdi>${esc(t.store)}</bdi>`);
   if (t.workspace) meta.push(`المشروع <bdi>${esc(t.workspace)}</bdi>`);
   if (ctx.file) meta.push(`الملف <bdi dir="ltr">${esc(ctx.file)}</bdi>${ctx.start_line ? ` (الأسطر ${ctx.start_line}–${ctx.end_line})` : ""}`);
   if (meta.length) h += `<p class="task-meta">${meta.join("، ")}</p>`;
@@ -383,7 +467,8 @@ async function submit(text, source = "text") {
   els.send.disabled = true;
   try {
     const workspace = $("#workspace").value || null;
-    const { task } = await api("POST", "/api/tasks", { request: text, source, workspace });
+    const storeId = $("#store").value || null;
+    const { task } = await api("POST", "/api/tasks", { request: text, source, workspace, store: storeId });
     if (source === "text") {
       els.input.value = "";
       autosize();
@@ -423,9 +508,16 @@ async function onTaskClick(e) {
   const task = state.tasks.get(taskId);
   try {
     if (act === "approve" || act === "reject" || act === "approve-files") {
+      const exclude = [...document.querySelectorAll(`[data-proposals="${btn.dataset.step}"] input.pick:not(:checked)`)]
+        .map((i) => Number(i.dataset.action));
+      const total = document.querySelectorAll(`[data-proposals="${btn.dataset.step}"] input.pick`).length;
+      if (act === "approve" && total && exclude.length === total) {
+        showHint("لم تحدد أي اقتراح. حدّد ما تريد تطبيقه، أو اختر «ارفض الكل».", true);
+        return;
+      }
       btn.disabled = true;
       await api("POST", `/api/steps/${btn.dataset.step}/decision`, {
-        approve: act !== "reject", scope: act === "approve-files" ? "files" : "all",
+        approve: act !== "reject", scope: act === "approve-files" ? "files" : "all", exclude,
       });
       schedulePoll();
     } else if (act === "cancel") {
@@ -690,6 +782,58 @@ async function loadWorkspaces() {
   renderWorkspaces();
 }
 
+function fillStorePicker() {
+  const sel = $("#store");
+  const saved = store.get("store", "");
+  sel.replaceChildren(option("", state.stores.length > 1 ? "يختار يوسف" : "بدون متجر", false));
+  state.stores.forEach((s) => sel.appendChild(option(s.id, s.name, s.id === saved)));
+  if (!state.stores.some((s) => s.id === saved)) sel.value = "";
+  $("#store-pick").hidden = state.stores.length === 0;
+}
+
+function renderStores() {
+  const ul = $("#store-list");
+  ul.replaceChildren();
+  if (!state.stores.length) {
+    const li = document.createElement("li");
+    li.textContent = "لا توجد متاجر بعد. أضف متجرك ليعمل عليه مدير المتاجر.";
+    ul.appendChild(li);
+  }
+  for (const s of state.stores) {
+    const li = document.createElement("li");
+    li.className = "ws-item";
+    li.innerHTML = `<div class="ws-head"><p><strong>${esc(s.name)}</strong> <span class="muted">${esc(s.label)}</span><br>`
+      + `<bdi dir="ltr" class="muted">${esc(s.url)}</bdi>${s.connected ? "" : " <em>(المفتاح غير محفوظ على هذا الجهاز)</em>"}</p>`
+      + `<span class="row-actions"><button type="button" class="link" data-store-act="test" data-store="${s.id}">اختبر</button>`
+      + `<button type="button" class="link" data-store-act="summary" data-store="${s.id}">مبيعات 30 يومًا</button>`
+      + `<button type="button" class="link" data-store-act="remove" data-store="${s.id}">أزل</button></span></div>`
+      + `<p class="status-line" role="status"></p>`;
+    ul.appendChild(li);
+  }
+  fillStorePicker();
+}
+
+async function loadStores() {
+  try {
+    state.stores = (await api("GET", "/api/stores")).stores;
+  } catch (e) {
+    state.stores = [];
+  }
+  renderStores();
+}
+
+function renderStoreForm() {
+  const woo = $("#store-platform").value === "woocommerce";
+  $("#store-shopify-fields").hidden = woo;
+  $("#store-woo-fields").hidden = !woo;
+  $("#store-url").placeholder = woo ? "https://my-shop.com" : "my-shop.myshopify.com";
+}
+
+function money(obj) {
+  const parts = Object.entries(obj || {}).map(([cur, v]) => `${v} ${cur}`);
+  return parts.length ? parts.join("، ") : "0";
+}
+
 function renderServices() {
   const box = $("#services");
   box.replaceChildren();
@@ -753,7 +897,10 @@ async function openDrawer() {
     renderLessons(lessons);
     renderAgents();
     await loadWorkspaces();
+    await loadStores();
+    renderStoreForm();
     $("#ws-status").textContent = "";
+    $("#store-status").textContent = "";
     $("#settings-status").textContent = "";
     $("#about").textContent = `الإصدار ${state.status.version}. بياناتك محفوظة على هذا الجهاز في: ${state.status.data_dir}`;
     for (const hook of window.Yousef.drawerHooks) {
@@ -831,6 +978,70 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
   $("#workspace").addEventListener("change", (e) => store.set("workspace", e.target.value));
+  $("#store").addEventListener("change", (e) => store.set("store", e.target.value));
+  els.tasks.addEventListener("change", (e) => {
+    const box = e.target.closest("input.pick");
+    if (!box) return;
+    const id = Number(box.dataset.action);
+    if (box.checked) state.unticked.delete(id); else state.unticked.add(id);
+  });
+  $("#store-platform").addEventListener("change", renderStoreForm);
+  $("#btn-add-store").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const line = $("#store-status");
+    line.classList.remove("is-error");
+    const platform = $("#store-platform").value;
+    const body = { platform, name: $("#store-name").value, url: $("#store-url").value, api_version: "" };
+    if (platform === "woocommerce") {
+      body.consumer_key = $("#store-ck").value;
+      body.consumer_secret = $("#store-cs").value;
+    } else {
+      body.token = $("#store-token").value;
+    }
+    btn.disabled = true;
+    line.textContent = "يختبر الاتصال بالمتجر…";
+    try {
+      const data = await api("POST", "/api/stores", body);
+      state.stores = data.stores;
+      renderStores();
+      ["#store-name", "#store-url", "#store-token", "#store-ck", "#store-cs"].forEach((id) => { $(id).value = ""; });
+      const count = data.info.products !== null && data.info.products !== undefined ? `، عدد المنتجات ${data.info.products}` : "";
+      line.textContent = `اتصل يوسف بـ «${data.info.name}» (العملة ${data.info.currency}${count}) وحُفظ المتجر.`;
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $("#store-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-store-act]");
+    if (!btn) return;
+    const id = btn.dataset.store;
+    const line = btn.closest("li").querySelector(".status-line");
+    line.classList.remove("is-error");
+    try {
+      if (btn.dataset.storeAct === "test") {
+        line.textContent = "يختبر…";
+        const { info } = await api("POST", `/api/stores/${id}/test`, {});
+        const count = info.products !== null && info.products !== undefined ? `، عدد المنتجات ${info.products}` : "";
+        line.textContent = `يعمل: ${info.name}، العملة ${info.currency}${count}.`;
+      } else if (btn.dataset.storeAct === "summary") {
+        line.textContent = "يقرأ الطلبات…";
+        const { summary } = await api("GET", `/api/stores/${id}/summary?days=30`);
+        const top = summary.top_products.slice(0, 3).map((t) => `${t.title} (${t.quantity})`).join("، ");
+        line.textContent = `آخر 30 يومًا: ${countOrders(summary.orders)}، الإيراد ${money(summary.revenue)}${top ? `. الأكثر مبيعًا: ${top}` : ""}.`;
+      } else {
+        const name = (state.stores.find((s) => s.id === id) || {}).name || "";
+        if (!confirm(`إزالة متجر «${name}» ومفتاحه من هذا الجهاز؟ لا يتأثر المتجر نفسه.`)) return;
+        state.stores = (await api("DELETE", `/api/stores/${id}`)).stores;
+        renderStores();
+      }
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    }
+  });
   $("#btn-add-ws").addEventListener("click", async () => {
     const input = $("#ws-path");
     const line = $("#ws-status");
@@ -922,6 +1133,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   } catch (e) { /* names fall back to keys */ }
   await loadStatus();
   await loadWorkspaces();
+  await loadStores();
   try { await loadTasks(); } catch (e) { els.empty.hidden = false; showHint(e.message, true); }
   setInterval(() => loadStatus(), 30000);
   els.input.focus();

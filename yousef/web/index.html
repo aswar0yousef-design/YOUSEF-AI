@@ -65,6 +65,10 @@
     </div>
     <div class="composer-meta">
       <p class="hint" id="composer-hint">للإرسال اضغط Enter، ولسطر جديد Shift+Enter.</p>
+      <label class="ws-pick" id="store-pick" hidden>
+        <span>المتجر</span>
+        <select id="store"><option value="">بدون متجر</option></select>
+      </label>
       <label class="ws-pick" id="ws-pick" hidden>
         <span>المشروع</span>
         <select id="workspace"><option value="">بدون مشروع</option></select>
@@ -120,6 +124,38 @@
       </div>
       <p class="status-line" id="ws-status" role="status"></p>
       <ul id="ws-list" class="lessons"></ul>
+    </section>
+
+    <section class="panel" id="stores-panel">
+      <h3>المتاجر</h3>
+      <p class="panel-note">يقرأ مدير المتاجر المنتجات والطلبات والمبيعات، ويقترح منتجات جديدة وتعديلات لا تُنفَّذ إلا بموافقتك. لا يحذف منتجات ولا يعدّل طلبات، ولا يقرأ أسماء العملاء ولا بياناتهم.</p>
+      <ul id="store-list" class="lessons"></ul>
+      <details class="add-store">
+        <summary>أضف متجرًا</summary>
+        <label for="store-platform">المنصة</label>
+        <select id="store-platform">
+          <option value="shopify">Shopify</option>
+          <option value="woocommerce">WooCommerce</option>
+        </select>
+        <label for="store-name">اسم المتجر عندك</label>
+        <input id="store-name" type="text" maxlength="60" placeholder="مثال: متجر العطور">
+        <label for="store-url">رابط المتجر</label>
+        <input id="store-url" type="text" dir="ltr" spellcheck="false">
+        <div id="store-shopify-fields">
+          <label for="store-token">Admin API access token</label>
+          <input id="store-token" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="shpat_...">
+          <p class="panel-note">من لوحة Shopify: الإعدادات، ثم التطبيقات، ثم «طوّر تطبيقًا». فعّل صلاحيات read_products وwrite_products وread_orders، ثم انسخ الرمز.</p>
+        </div>
+        <div id="store-woo-fields" hidden>
+          <label for="store-ck">Consumer key</label>
+          <input id="store-ck" type="text" dir="ltr" autocomplete="off" spellcheck="false" placeholder="ck_...">
+          <label for="store-cs">Consumer secret</label>
+          <input id="store-cs" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="cs_...">
+          <p class="panel-note">من ووردبريس: WooCommerce، ثم الإعدادات، ثم متقدم، ثم REST API. أنشئ مفتاحًا بصلاحية «قراءة/كتابة». يجب أن يعمل موقعك بـ https.</p>
+        </div>
+        <button type="button" class="primary" id="btn-add-store">اختبر الاتصال واحفظ</button>
+        <p class="status-line" id="store-status" role="status"></p>
+      </details>
     </section>
 
     <section class="panel" id="services-panel">
