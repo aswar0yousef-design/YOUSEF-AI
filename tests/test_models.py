@@ -249,11 +249,47 @@ class ReasoningModelTest(unittest.TestCase):
         self.replies = [(crash, "crash"), ("أهلًا", "stop")]
         self.assertEqual(self.provider.chat("gpt-oss:20b", msgs), "أهلًا")  # Ollama restarts its runner
         self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.provider.cpu_only, set())
+
+        # the card cannot run it: the processor answers, and keeps answering for the session
+        self.requests.clear()
+        self.replies = [(crash, "crash"), (crash, "crash"), ("على المعالج", "stop")]
+        self.assertEqual(self.provider.chat("gpt-oss:20b", msgs), "على المعالج")
+        self.assertEqual([r["options"].get("num_gpu") for r in self.requests], [None, None, 0])
+        self.assertEqual(self.provider.cpu_only, {"gpt-oss:20b"})
+        self.provider.chat("gpt-oss:20b", msgs)
+        self.assertEqual(self.requests[-1]["options"]["num_gpu"], 0)
+
+        # not even on the processor: explain what to check
         self.replies = [(crash, "crash"), (crash, "crash")]
         with self.assertRaises(ProviderError) as cm:
             self.provider.chat("gpt-oss:20b", msgs)
-        self.assertIn("ذاكرة كرت الشاشة", str(cm.exception))
+        self.assertIn("ollama run gpt-oss:20b", str(cm.exception))
         self.assertIn("qwen2.5:7b", str(cm.exception))
+        self.assertEqual(self.provider.cpu_only, set())
+
         self.replies = [('json: unknown field "think"', "crash"), ("ok", "stop")]
         self.assertEqual(self.provider.chat("gpt-oss:20b", msgs), "ok")  # an older Ollama without reasoning levels
         self.assertNotIn("think", self.requests[-1])
+
+    def test_speech_gives_the_card_back_first(self):
+        freed = []
+        self.provider.free_gpu = lambda: freed.append(1) or True
+        self.replies = [("CUDA error: out of memory", "crash"), ("تم", "stop")]
+        self.assertEqual(self.provider.chat("gpt-oss:20b", [{"role": "user", "content": "x"}]), "تم")
+        self.assertEqual(freed, [1])
+        self.assertNotIn("num_gpu", self.requests[-1]["options"])  # still on the card
+
+
+class RouterGpuTest(unittest.TestCase):
+    def test_router_shares_cpu_fallback(self):
+        with tempfile.TemporaryDirectory() as d:
+            settings = Settings(Path(d) / "s.json")
+            keystore = KeyStore(Path(d) / "k.dat", cipher=None)
+            router = Router(settings, keystore)
+            router.free_gpu = lambda: False
+            first, second = router._local_provider(settings.get()), router._local_provider(settings.get())
+            first.cpu_only.add("gpt-oss:20b")
+            self.assertIs(second.cpu_only, router.cpu_only)
+            self.assertIn("gpt-oss:20b", second.cpu_only)
+            self.assertIs(second.free_gpu, router.free_gpu)

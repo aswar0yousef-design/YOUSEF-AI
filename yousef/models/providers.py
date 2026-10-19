@@ -24,10 +24,15 @@ _RUNNER_CRASH = ("process has terminated", "cuda error", "out of memory", "unabl
 
 
 def explain_crash(model: str, error: Exception) -> str:
-    return (f"توقّف Ollama أثناء تشغيل {model}، وغالبًا امتلأت ذاكرة كرت الشاشة. جرّب بالترتيب: أعد المحاولة؛ "
-            "واجعل الصوت على «المعالج» إن كان على كرت الشاشة (الإعدادات ← الصوت)؛ وأغلق البرامج والألعاب التي "
-            "تستخدم الكرت؛ أو اختر نموذجًا أصغر يناسب 6GB مثل qwen2.5:7b. "
-            f"(الخطأ: {str(error)[:180]})")
+    return (f"توقّف Ollama عند تشغيل {model} على كرت الشاشة وعلى المعالج أيضًا، فالمشكلة في Ollama نفسه أو في تعريف "
+            "كرت الشاشة، لا في يوسف. جرّب بالترتيب: أغلق Ollama من أيقونته بجانب الساعة وافتحه من جديد؛ حدّث Ollama "
+            f"من ollama.com وتعريف NVIDIA؛ ثم جرّب في الطرفية: ollama run {model} \"مرحبا\". وإن لم يعمل هناك أيضًا "
+            f"فاختر نموذجًا آخر مثل qwen2.5:7b. (الخطأ: {str(error)[:160]})")
+
+
+def _crashed(error: Exception) -> bool:
+    text = str(error).lower()
+    return any(c in text for c in _RUNNER_CRASH)
 
 
 def _is_reasoning(model: str) -> bool:
@@ -53,6 +58,9 @@ class OllamaProvider(Provider):
     def __init__(self, base_url: str, num_ctx: int = 8192):
         self.base_url = base_url.rstrip("/")
         self.num_ctx = num_ctx
+        # set by the router, shared across requests: models the graphics card could not run this session
+        self.cpu_only: set[str] = set()
+        self.free_gpu = None  # callable -> bool: moves other work (speech) off the graphics card
 
     def list_models(self) -> list[str]:
         data = http_json("GET", f"{self.base_url}/api/tags", timeout=5, opener=NO_PROXY_OPENER) or {}
@@ -69,6 +77,8 @@ class OllamaProvider(Provider):
         # the context size stays the user's: a larger one makes Ollama reload the model and can overflow a small GPU
         body = {"model": model, "messages": messages, "stream": False,
                 "options": {"temperature": 0.3, "num_ctx": self.num_ctx}}
+        if model in self.cpu_only:
+            body["options"]["num_gpu"] = 0
         if json_format:
             body["format"] = "json"
         if _is_reasoning(model):
@@ -76,24 +86,45 @@ class OllamaProvider(Provider):
         try:
             data = self._post(body)
         except ProviderError as e:
-            text = str(e).lower()
-            if "think" in body and "think" in text:
+            if "think" in body and "think" in str(e).lower():
                 log.warning("%s: this Ollama does not accept a reasoning level (%s); asking without it", model, e)
                 body.pop("think")
                 data = self._post(body)
-            elif any(c in text for c in _RUNNER_CRASH):
-                log.warning("%s: Ollama's runner stopped (%s); trying once more", model, e)
-                time.sleep(self.retry_pause)
-                try:
-                    data = self._post(body)
-                except ProviderError as again:
-                    raise ProviderError(explain_crash(model, again)) from None
+            elif _crashed(e):
+                data = self._recover(model, body, e)
             else:
                 raise
         message = data.get("message") or {}
         if "content" not in message:
             raise ProviderError(f"Ollama returned no message: {str(data)[:200]}")
         return message["content"] or "", data
+
+    def _recover(self, model: str, body: dict, error: Exception) -> dict:
+        """Ollama's runner died, usually because the model did not fit on the graphics card.
+        1. free the card (speech moves to the processor) or just try again: Ollama restarts its runner;
+        2. run this model on the processor for the rest of the session (slower, but it answers);
+        3. give up with what to check."""
+        log.warning("%s: Ollama's runner stopped (%s)", model, str(error)[:200])
+        freed = bool(self.free_gpu and self.free_gpu())
+        if freed:
+            log.warning("%s: moved speech recognition off the graphics card; trying again", model)
+        time.sleep(self.retry_pause)
+        if "num_gpu" not in body["options"]:
+            try:
+                return self._post(body)
+            except ProviderError as again:
+                if not _crashed(again):
+                    raise
+                log.warning("%s: stopped again on the graphics card; running it on the processor", model)
+            body["options"]["num_gpu"] = 0
+            self.cpu_only.add(model)
+        try:
+            return self._post(body)
+        except ProviderError as last:
+            if _crashed(last):
+                self.cpu_only.discard(model)
+                raise ProviderError(explain_crash(model, last)) from None
+            raise
 
     def chat(self, model, messages, *, json_mode=False):
         if not json_mode:

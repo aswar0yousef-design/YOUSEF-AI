@@ -50,6 +50,15 @@ class Router:
         self.factory = factory
         self._lock = threading.Lock()
         self._local_cache: tuple[float, str, dict] | None = None
+        self.cpu_only: set[str] = set()  # local models the graphics card could not run this session
+        self.free_gpu = None             # set by the app: moves speech recognition off the graphics card
+
+    def _local_provider(self, s: dict):
+        provider = self.factory("ollama", s, self.keystore)
+        if isinstance(provider, OllamaProvider):
+            provider.cpu_only = self.cpu_only
+            provider.free_gpu = self.free_gpu
+        return provider
 
     def provider(self, name: str) -> Provider | None:
         return self.factory(name, self.settings.get(), self.keystore)
@@ -69,6 +78,7 @@ class Router:
         models = status.get("models", [])
         status["active_model"] = chosen if chosen else (models[0] if models else "")
         status["url"] = s["ollama_url"]
+        status["cpu_only"] = status["active_model"] in self.cpu_only
         return status
 
     def _probe_ollama(self, s: dict) -> dict:
@@ -88,7 +98,7 @@ class Router:
         local: list[tuple[Provider, str]] = []
         status = self.ollama_status()
         if status["reachable"] and status["active_model"]:
-            provider = self.factory("ollama", s, self.keystore)
+            provider = self._local_provider(s)
             if provider:
                 local.append((provider, status["active_model"]))
 

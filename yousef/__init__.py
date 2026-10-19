@@ -5,5 +5,5 @@ Python standard library. Voice is optional and needs faster-whisper
 (install-voice.bat).
 """
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"
 APP_TITLE = "YOUSEF AI"

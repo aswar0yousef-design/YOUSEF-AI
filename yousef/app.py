@@ -55,4 +55,5 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     orchestrator = Orchestrator(memory, router, settings, keystore, stores, social=social, media=media,
                                 publisher=publisher)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
+    router.free_gpu = voice.release_gpu  # when Ollama's runner dies, speech gives the graphics card back first
     return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher)

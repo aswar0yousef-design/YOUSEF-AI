@@ -259,6 +259,28 @@ class WhisperBackendTest(unittest.TestCase):
 
 
 class GpuFallbackTest(unittest.TestCase):
+    def test_release_for_ollama(self):
+        with tempfile.TemporaryDirectory() as d:
+            settings = Settings(Path(d) / "s.json")
+            settings.update({"voice": {"device": "cuda"}})
+            made = []
+
+            def factory(model, device, root):
+                made.append(device)
+                return FakeBackend(model, device, root)
+
+            eng = VoiceEngine(settings, Path(d), backend_factory=factory)
+            self.assertFalse(eng.release_gpu())  # nothing loaded yet
+            eng.load()
+            eng.wait_loaded()
+            self.assertEqual(eng.status()["device_used"], "cuda")
+            self.assertTrue(eng.release_gpu())
+            eng.wait_loaded()
+            status = eng.status()
+            self.assertEqual((status["state"], status["device_used"], made), ("ready", "cpu", ["cuda", "cpu"]))
+            self.assertIn("Ollama", status["note"])
+            self.assertFalse(eng.release_gpu())  # already on the processor
+
     def test_cpu_when_gpu_fails(self):
         with tempfile.TemporaryDirectory() as d:
             settings = Settings(Path(d) / "s.json")

@@ -173,15 +173,32 @@ class VoiceEngine:
                 self._thread.start()
         return self.status()
 
+    def release_gpu(self) -> bool:
+        """Ollama needs the graphics card: reload speech recognition on the processor. True if it was on the card."""
+        with self._lock:
+            if self._state != "ready" or self._device_used != "cuda":
+                return False
+            self._backend = None  # frees the card's memory held by the model
+            self._state = "loading"
+            key = self._loaded_key or self._key()
+            self._thread = threading.Thread(target=self._load, args=(key, "cpu"), name="voice-cpu", daemon=True)
+            self._thread.start()
+        import gc
+        gc.collect()
+        return True
+
     def wait_loaded(self, timeout: float = 30) -> None:
         thread = self._thread
         if thread:
             thread.join(timeout)
 
-    def _load(self, key: tuple[str, str]) -> None:
+    def _load(self, key: tuple[str, str], force_device: str | None = None) -> None:
         model, device = key
         started = time.time()
         note, used = "", device
+        if force_device == "cpu" and device == "cuda":
+            device, used = "cpu", "cpu"
+            note = "نُقل الصوت إلى المعالج لأن Ollama احتاج ذاكرة كرت الشاشة. يعود للكرت عند إعادة تشغيل يوسف."
         factory = self._factory or WhisperBackend
         try:
             self.download_root.mkdir(parents=True, exist_ok=True)

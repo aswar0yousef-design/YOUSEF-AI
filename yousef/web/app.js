@@ -708,7 +708,11 @@ function renderStatus() {
   const s = state.status;
   const o = s.ollama;
   const localOk = o.reachable && o.active_model;
-  if (localOk) setEngine(els.engineLocal, "is-ok", `محلي: ${o.active_model}`);
+  if (localOk) setEngine(els.engineLocal, "is-ok", `محلي: ${o.active_model}${o.cpu_only ? " (على المعالج)" : ""}`);
+  if (localOk && o.cpu_only && !state.cpuNoticed) {
+    state.cpuNoticed = true;
+    showHint(`كرت الشاشة لم يستطع تشغيل ${o.active_model}، فيعمل الآن على المعالج (أبطأ). نموذج أصغر مثل qwen2.5:7b يعمل على الكرت بسرعة.`);
+  }
   else if (o.reachable) setEngine(els.engineLocal, "is-warn", "Ollama يعمل بلا نماذج");
   else setEngine(els.engineLocal, "is-warn", "Ollama غير متصل");
 
