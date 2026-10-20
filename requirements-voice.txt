@@ -1,2 +1,4 @@
 # Optional: local speech-to-text for YOUSEF AI (installed by install-voice.bat)
 faster-whisper>=1.1.0
+# listening from Windows without a browser tab (microphone access)
+sounddevice>=0.4.6

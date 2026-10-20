@@ -673,6 +673,19 @@ async function submit(text, source = "text") {
   }
 }
 
+// tasks started elsewhere (the Windows listener, the phone, VS Code) appear here too
+async function checkNewTasks() {
+  if (document.hidden || !els.drawer.hidden) return;
+  let tasks;
+  try { ({ tasks } = await api("GET", "/api/tasks?limit=5")); } catch (e) { return; }
+  const fresh = tasks.filter((t) => !state.tasks.has(t.id));  // oldest first, like the list
+  if (!fresh.length) return;
+  const stick = nearBottom();
+  fresh.forEach(renderTask);
+  if (stick) window.scrollTo({ top: document.body.scrollHeight });
+  if (fresh.some((t) => ACTIVE.has(t.status))) schedulePoll();
+}
+
 async function loadTasks() {
   const { tasks } = await api("GET", "/api/tasks?limit=30");
   els.tasks.innerHTML = "";
@@ -1886,5 +1899,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   setInterval(() => loadStatus(), 30000);
   checkAlerts();
   setInterval(checkAlerts, 60000);
+  setInterval(checkNewTasks, 8000);
   els.input.focus();
 });

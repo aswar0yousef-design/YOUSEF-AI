@@ -53,6 +53,7 @@
         <button type="button" class="example">اكتب ثلاثة منشورات إنستغرام لإطلاق منتج جديد في متجري، بلهجة قريبة من الجمهور العُماني</button>
         <button type="button" class="example">حلّل نقاط القوة والضعف لمتجر منافس يبيع العطور والبخور، ثم اقترح خطة تسويق لشهر</button>
         <button type="button" class="example">اكتب دالة بايثون تقرأ ملف CSV للمبيعات وتعطيني أعلى خمسة منتجات ربحًا</button>
+        <button type="button" class="example">حلّل البيتكوين على إطار 4 ساعات، وأعطني أقرب دعم ومقاومة</button>
       </div>
       <p class="version-line" id="version-line"></p>
     </section>
@@ -306,6 +307,12 @@
       <label class="check"><input type="checkbox" id="voice-preload"> حمّل النموذج عند تشغيل يوسف</label>
       <button type="button" class="primary" id="btn-save-voice">احفظ إعدادات الصوت</button>
       <p class="status-line" id="voice-status" role="status"></p>
+
+      <h4 class="sub">الاستماع من ويندوز</h4>
+      <label class="check"><input type="checkbox" id="listener-on"> استمع لكلمة التنبيه من ويندوز مباشرة، بدون فتح المتصفح</label>
+      <label class="check"><input type="checkbox" id="listener-speak"> ردّ بصوت ويندوز</label>
+      <p class="panel-note" id="listener-note">يعمل ما دام يوسف شغّالًا، حتى والمتصفح مغلق. قل «يوسف» ثم طلبك، وللموافقة قل «وافق» أو «ارفض». الرد العربي يحتاج صوتًا عربيًا في ويندوز (الإعدادات ← الوقت واللغة ← الكلام).</p>
+      <p class="status-line" id="listener-status" role="status"></p>
 
       <h4 class="sub">قراءة الردود بصوت</h4>
       <label class="check"><input type="checkbox" id="tts-on"> اقرأ ردود الطلبات الصوتية</label>

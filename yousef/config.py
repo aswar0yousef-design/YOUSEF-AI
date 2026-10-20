@@ -67,6 +67,8 @@ DEFAULT_SETTINGS: dict = {
         "language": "auto",
         "wake_words": ["يوسف", "يا يوسف", "Yousef", "Youssef", "Yusuf"],
         "preload": True,
+        "listener": False,  # listen from Windows itself (no browser tab), started with Yousef
+        "speak": True,      # ... and answer with Windows' own voices
     },
 }
 
@@ -313,8 +315,9 @@ def _validate_voice(voice) -> dict:
             or not all(isinstance(w, str) and 2 <= len(w.strip()) <= 30 for w in words)):
         raise SettingsError("voice.wake_words must list 1-10 words of 2-30 letters")
     v["wake_words"] = list(dict.fromkeys(w.strip() for w in words))
-    if not isinstance(v["preload"], bool):
-        raise SettingsError("voice.preload must be true or false")
+    for key in ("preload", "listener", "speak"):
+        if not isinstance(v[key], bool):
+            raise SettingsError(f"voice.{key} must be true or false")
     return v
 
 

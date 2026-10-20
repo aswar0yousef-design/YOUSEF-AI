@@ -5,6 +5,7 @@ cd /d "%~dp0"
 
 echo.
 echo  YOUSEF AI - installing local speech recognition (faster-whisper)
+echo  and microphone access for listening from Windows (sounddevice)
 echo  This needs internet once. The speech model itself downloads the
 echo  first time you use voice (about 1.6 GB for "large-v3-turbo", the
 echo  model that understands Arabic well).

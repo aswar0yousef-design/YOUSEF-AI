@@ -455,7 +455,8 @@
   async function send(command) {
     setListen("wake");
     try {
-      await Y.submit(command, "voice");
+      const task = await Y.submit(command, "voice");
+      if (task) mine.add(task.id);
     } catch (e) {
       Y.showHint(e.message, true);
     }
@@ -508,6 +509,10 @@
 
   async function toggleHands() {
     if (v.hands) { stopHands(); return; }
+    if (Y.state.listenerOn) {  // Windows is already listening; two listeners would answer twice
+      Y.showHint(`يوسف يستمع من ويندوز الآن. قل «${Y.state.voiceWake || "يوسف"}» ثم طلبك.`);
+      return;
+    }
     if (!(await ensureReady())) return;
     try {
       await openMic();
@@ -530,8 +535,12 @@
   }
 
   // Called by the dashboard whenever a task changes.
+  // voice tasks this page started; the others (Windows listener, phone) are read aloud by whoever started them
+  const mine = new Set();
+
   function onTask(task, prev) {
     if (task.source !== "voice") return;
+    if (Y.state.listenerOn && !mine.has(task.id)) return;
     const before = prev ? prev.status : null;
     if (task.status === "waiting") {
       const step = (task.steps || []).find((s) => s.status === "awaiting_approval");
@@ -659,9 +668,49 @@
     $("#voice-wake").value = voice.wake_words.join("، ");
     $("#voice-preload").checked = voice.preload;
     $("#voice-status").textContent = "";
+    renderListener(s && s.listener, voice);
     $("#tts-on").checked = store.get("ttsOn", true);
     $("#tts-online").checked = store.get("ttsOnline", false);
     fillVoices();
+  }
+
+  const LISTEN_MODE = { wake: "ينتظر كلمة التنبيه", command: "ينتظر طلبك", approval: "ينتظر «وافق» أو «ارفض»" };
+
+  function renderListener(l, voice) {
+    if (!l) return;
+    Y.state.listenerOn = l.running;
+    $("#listener-on").checked = l.running;
+    $("#listener-speak").checked = voice.speak !== false;
+    const line = $("#listener-status");
+    line.classList.toggle("is-error", Boolean(l.error) || (!l.mic && !l.running));
+    if (l.error) line.textContent = l.error;
+    else if (l.running) {
+      line.textContent = `يستمع الآن: ${LISTEN_MODE[l.mode] || ""}${l.heard ? ` — آخر ما سمعه: «${l.heard}»` : ""}`
+        + (l.arabic_voice ? "" : ". لا يوجد صوت عربي في ويندوز، فالردود تظهر في اللوحة.");
+    } else line.textContent = l.mic ? "" : "يحتاج تثبيت الصوت مرة أخرى (install-voice.bat) ليصل إلى الميكروفون.";
+  }
+
+  async function toggleListener(e) {
+    const line = $("#listener-status");
+    try {
+      const s = await Y.api("PUT", "/api/voice/listener", { enabled: e.target.checked });
+      renderListener(s.listener, (Y.state.settings || {}).voice || {});
+      if (s.listener.running && v.hands) stopHands();  // one listener is enough
+    } catch (err) {
+      e.target.checked = false;
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    }
+  }
+
+  async function toggleSpeak(e) {
+    try {
+      const data = await Y.api("PUT", "/api/settings", { voice: { speak: e.target.checked } });
+      Y.state.settings = data.settings;
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      Y.showHint(err.message, true);
+    }
   }
 
   function modelNote() {
@@ -716,6 +765,8 @@
     $("#tts-online").addEventListener("change", (e) => { store.set("ttsOnline", e.target.checked); fillVoices(); });
     $("#tts-ar").addEventListener("change", (e) => store.set("ttsAr", e.target.value));
     $("#tts-en").addEventListener("change", (e) => store.set("ttsEn", e.target.value));
+    $("#listener-on").addEventListener("change", toggleListener);
+    $("#listener-speak").addEventListener("change", toggleSpeak);
     $("#btn-tts-test").addEventListener("click", () => {
       const ar = tts.pick("ar");
       tts.speak(ar ? "مرحبًا، أنا يوسف. هكذا سأقرأ ردودي عليك." : "Hello, I am Yousef. This is how I will read my replies.", null, true);
@@ -724,6 +775,7 @@
 
     Y.api("GET", "/api/voice/status").then((st) => {
       Y.state.voiceWake = st.wake_words[0];
+      Y.state.listenerOn = Boolean(st.listener && st.listener.running);
       ui.update();
     }).catch(() => {});
     Y.taskHooks.push(onTask);

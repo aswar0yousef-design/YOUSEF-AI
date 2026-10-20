@@ -120,6 +120,12 @@ def main(argv=None) -> int:
         if app.settings.get()["voice"]["preload"]:
             app.voice.load()
             print("  Voice: loading the speech model in the background.")
+        if app.settings.get()["voice"]["listener"]:
+            try:
+                app.listener.start()
+                print("  Voice: listening from Windows (say the wake word).")
+            except Exception as e:  # the dashboard shows the reason
+                print(f"  Voice: could not listen from Windows: {e}")
     else:
         print("  Voice: not installed (run install-voice.bat once to enable it).")
     print()

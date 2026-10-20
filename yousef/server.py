@@ -428,6 +428,7 @@ class Api:
             ("GET", r"/api/voice/status", self.voice_status),
             ("POST", r"/api/voice/load", self.voice_load),
             ("POST", r"/api/voice/transcribe", self.voice_transcribe),
+            ("PUT", r"/api/voice/listener", self.voice_listener),
         ]
 
     def dispatch(self, method: str, path: str, query: dict, body: dict):
@@ -591,7 +592,24 @@ class Api:
 
     # ---- voice -----------------------------------------------------------------
     def voice_status(self, query, body):
-        return 200, self.app.voice.status()
+        return 200, dict(self.app.voice.status(), listener=self.app.listener.status())
+
+    def voice_listener(self, query, body):
+        """Listening from Windows itself (no browser tab): on or off, remembered for the next start."""
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ApiError(400, "enabled must be true or false")
+        if enabled:
+            try:
+                self.app.listener.start()
+            except (VoiceNotInstalled, VoiceNotReady) as e:
+                msg = str(e) if str(e) and str(e) != "install-voice.bat" else \
+                    "الصوت غير مثبّت. شغّل install-voice.bat مرة واحدة ثم أعد تشغيل يوسف."
+                raise ApiError(501, msg) from None
+        else:
+            self.app.listener.stop()
+        self.app.settings.update({"voice": {"listener": enabled}})
+        return self.voice_status({}, {})
 
     def voice_load(self, query, body):
         try:

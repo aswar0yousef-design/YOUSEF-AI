@@ -24,6 +24,7 @@ from .trading.alerts import AlertWatcher
 from .trading.market import Market
 from .trading.paper import PaperBook
 from .voice import VoiceEngine
+from .voice.listener import NativeListener
 
 
 @dataclass
@@ -46,8 +47,10 @@ class App:
     alerts: AlertWatcher
     device: Device
     remote: RemoteAccess
+    listener: NativeListener
 
     def close(self) -> None:
+        self.listener.stop()
         self.publisher.stop()
         self.alerts.stop()
         self.orchestrator.shutdown()
@@ -57,7 +60,8 @@ class App:
 
 def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_backend=None,
               store_factory=None, meta_api: str | None = None, meta_sleep=None, image_urls: dict | None = None,
-              market_urls: dict | None = None, device_backend=None, device_home: Path | None = None) -> App:
+              market_urls: dict | None = None, device_backend=None, device_home: Path | None = None,
+              listener_mic=None, listener_speaker=None) -> App:
     root = Path(data_dir) if data_dir else default_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     settings = Settings(root / "settings.json")
@@ -82,5 +86,7 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
                                 device=device)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
     router.free_gpu = voice.release_gpu  # when Ollama's runner dies, speech gives the graphics card back first
+    listener = NativeListener(settings, voice, orchestrator, memory, mic_factory=listener_mic, speaker=listener_speaker)
+    alerts.listeners.append(listener.on_alert)
     return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher, ads,
-               images, market, paper, alerts, device, remote)
+               images, market, paper, alerts, device, remote, listener)
