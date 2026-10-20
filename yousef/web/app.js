@@ -29,6 +29,8 @@ const TOOL_LABEL = {
   propose_end_discount: "إيقاف عرض مقترح", propose_bundle: "باقة مقترحة",
   git_commit: "commit مقترح", git_push: "push مقترح", open_pr: "Pull Request مقترح",
   site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود", check_dependencies: "فحص الحزم",
+  price: "السعر", analyze: "تحليل الشارت", compare: "مقارنة", portfolio: "المحفظة التجريبية", list_alerts: "التنبيهات",
+  propose_trade: "صفقة تجريبية مقترحة", propose_alert: "تنبيه مقترح", propose_cancel_alert: "إلغاء تنبيه مقترح",
 };
 const MEDIA_NAME = /^media:img-[0-9a-f]{16}\.(?:jpg|png)$/;
 const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
@@ -41,6 +43,7 @@ const PROPOSAL_KIND = {
   store_create_product: "منتج جديد", store_update_product: "تعديل منتج", store_create_discount: "عرض جديد",
   store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
   social_cancel: "إلغاء منشور مجدول", ads_pause: "إيقاف إعلان", ads_resume: "تشغيل إعلان", ads_budget: "ميزانية إعلان",
+  trade_buy: "شراء تجريبي", trade_sell: "بيع تجريبي", trade_alert: "تنبيه سعر", trade_cancel_alert: "إلغاء تنبيه",
 };
 const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
 const OUTSIDE = ["store_", "social_", "ads_", "trade_", "device_"];
@@ -57,13 +60,14 @@ const ACTION_STATUS = {
 const SERVICES = [
   ["github", "GitHub", "لفتح Pull Requests. الرفع (push) يستخدم git المثبّت عندك وصلاحياته."],
   ["vercel", "Vercel", "للقراءة فقط: حالة النشر وأخطاء البناء. النشر نفسه يحدث عند الرفع إلى GitHub."],
+  ["twelvedata", "Twelve Data", "لأسعار الأسهم الأمريكية والفوركس والذهب في محلل التداول. الخطة المجانية تكفي (800 طلب يوميًا): أنشئ حسابًا في twelvedata.com وانسخ مفتاح API. العملات الرقمية تعمل بدونه.", "مفتاح API"],
 ];
 const ACTIVE = new Set(["planning", "running", "waiting"]);
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const state = {
   tasks: new Map(), open: new Set(), status: null, settings: null, keys: null, agents: [], pollTimer: null, workspaces: [],
-  stores: [], unticked: new Set(), social: [], posts: [], attached: [], ads: [],
+  stores: [], unticked: new Set(), social: [], posts: [], attached: [], ads: [], alertsShown: new Set(),
 };
 
 const store = {
@@ -279,6 +283,10 @@ function stepHTML(step, task, hideOutput) {
       how = pendingProposals.length > 1 ? "أزل علامة ما لا تريد نشره، ثم قرّر." : "راجعه، ثم قرّر.";
       safe = "لن يُنشر شيء قبل موافقتك.";
     }
+    if (pendingProposals.length && pendingProposals.every((a) => a.kind.startsWith("trade_"))) {
+      how = pendingProposals.length > 1 ? "أزل علامة ما لا تريده، ثم قرّر." : "راجعه، ثم قرّر.";
+      safe = "كلها تجريبية بأموال افتراضية، ولا يُنفَّذ شيء قبل موافقتك.";
+    }
     if (pendingProposals.length && pendingProposals.every((a) => a.kind.startsWith("ads_"))) {
       how = pendingProposals.length > 1 ? "أزل علامة ما لا تريده، ثم قرّر." : "راجعه، ثم قرّر.";
       safe = "لن يتغيّر شيء في الإعلانات قبل موافقتك.";
@@ -346,6 +354,11 @@ function storeParts(proposals) {
   if (n("social_cancel")) parts.push(`إلغاء ${countPosts(n("social_cancel"))} مجدول`);
   const ads = n("ads_pause") + n("ads_resume") + n("ads_budget");
   if (ads) parts.push(`${ads === 1 ? "تغيير واحد" : ads === 2 ? "تغييرين" : `${ads} تغييرات`} في الإعلانات`);
+  const trades = n("trade_buy") + n("trade_sell");
+  if (trades) parts.push(trades === 1 ? "صفقة تجريبية واحدة" : trades === 2 ? "صفقتين تجريبيتين" : `${trades} صفقات تجريبية`);
+  const alerts = n("trade_alert");
+  if (alerts) parts.push(alerts === 1 ? "تنبيه سعر" : alerts === 2 ? "تنبيهَي سعر" : `${alerts} تنبيهات أسعار`);
+  if (n("trade_cancel_alert")) parts.push(`إلغاء ${n("trade_cancel_alert") === 1 ? "تنبيه" : `${n("trade_cancel_alert")} تنبيهات`}`);
   return parts;
 }
 
@@ -1111,6 +1124,75 @@ async function attachFiles(files) {
   renderAttached();
 }
 
+const usd = (x) => (x === null || x === undefined ? "—" : `${Number(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}$`);
+const signed = (x, suffix = "") => (x === null || x === undefined ? "—" : `${x >= 0 ? "+" : ""}${Number(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${suffix}`);
+const qtyText = (x) => Number(x).toPrecision(6).replace(/\.?0+$/, "");
+const priceText = (x) => Number(x).toLocaleString("en-US", x >= 1000 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+  : x >= 1 ? { maximumFractionDigits: 4 } : { maximumSignificantDigits: 6 });
+
+async function loadTrading() {
+  let data;
+  try { data = await api("GET", "/api/trading?prices=1"); } catch (e) { $("#trade-summary").textContent = e.message; return; }
+  renderTrading(data);
+}
+
+function renderTrading(data) {
+  const p = data.portfolio;
+  const cls = p.pnl >= 0 ? "gain" : "loss";
+  $("#trade-summary").innerHTML = `القيمة <b dir="ltr">${usd(p.value)}</b> · النقد <bdi dir="ltr">${usd(p.cash)}</bdi> · `
+    + `منذ البداية <bdi dir="ltr" class="${cls}">${signed(p.pnl, "$")} (${signed(p.pnl_pct, "%")})</bdi>`
+    + (data.stocks ? "" : `<br><span class="muted">الأسهم والذهب تحتاج مفتاح Twelve Data من «الخدمات» أدناه.</span>`);
+  const pos = $("#trade-positions");
+  pos.replaceChildren();
+  $("#trade-pos-title").hidden = pos.hidden = p.positions.length === 0;
+  for (const x of p.positions) {
+    const li = document.createElement("li");
+    li.innerHTML = `<strong dir="ltr">${esc(x.display)}</strong> <span class="muted" dir="ltr">${esc(qtyText(x.qty))}</span>`
+      + ` · <bdi dir="ltr">${usd(x.value)}</bdi> · <bdi dir="ltr" class="${(x.pnl || 0) >= 0 ? "gain" : "loss"}">${x.pnl === null ? "—" : `${signed(x.pnl, "$")} (${signed(x.pnl_pct, "%")})`}</bdi>`;
+    pos.appendChild(li);
+  }
+  const al = $("#trade-alerts");
+  al.replaceChildren();
+  $("#trade-alerts-title").hidden = al.hidden = data.alerts.length === 0;
+  for (const a of data.alerts) {
+    const li = document.createElement("li");
+    li.className = `ws-item alert-row is-${a.status}`;
+    const fired = a.status === "triggered" ? ` <span class="cstatus is-done">تحقق عند <bdi dir="ltr">${esc(a.fired_text)}</bdi></span>` : "";
+    li.innerHTML = `<div class="ws-head"><p><span dir="rtl">${esc(a.text)}</span>${fired}${a.note ? `<br><span class="muted" dir="auto">${esc(a.note)}</span>` : ""}</p>`
+      + `<button type="button" class="link" data-alert-del="${a.id}">احذف</button></div>`;
+    al.appendChild(li);
+  }
+  const tr = $("#trade-history");
+  tr.replaceChildren();
+  $("#trade-history-title").hidden = tr.hidden = data.trades.length === 0;
+  for (const t of data.trades.slice(0, 6)) {
+    const li = document.createElement("li");
+    const when = new Date(t.created_at * 1000).toLocaleDateString("ar", { day: "numeric", month: "short" });
+    li.innerHTML = `${t.side === "buy" ? "شراء" : "بيع"} <bdi dir="ltr">${esc(qtyText(t.qty))} ${esc(t.display)}</bdi> بسعر <bdi dir="ltr">${esc(priceText(t.price))}</bdi>`
+      + (t.pnl !== null ? ` · <bdi dir="ltr" class="${t.pnl >= 0 ? "gain" : "loss"}">${signed(t.pnl, "$")}</bdi>` : "")
+      + ` <span class="muted">${esc(when)}</span>`;
+    tr.appendChild(li);
+  }
+}
+
+// alerts that fired while Yousef runs: a bar at the top of the conversation
+async function checkAlerts() {
+  let alerts = [];
+  try { alerts = (await api("GET", "/api/trading/alerts")).alerts; } catch (e) { return; }
+  const bar = $("#alert-bar");
+  if (!alerts.length) { bar.hidden = true; return; }
+  const fresh = alerts.filter((a) => !state.alertsShown.has(a.id));
+  bar.innerHTML = `<p><b>تنبيهات الأسعار:</b> ${alerts.map((a) => `<span dir="rtl">${esc(a.text)}</span>`
+    + ` (تحقق عند <bdi dir="ltr">${esc(a.fired_text)}</bdi>)`).join("، ")}</p>`
+    + `<button type="button" class="ghost" id="btn-alerts-seen">حسنًا</button>`;
+  bar.hidden = false;
+  if (fresh.length) {
+    fresh.forEach((a) => state.alertsShown.add(a.id));
+    const V = window.YousefVoice;
+    if (V && V.state.hands) V.tts.speak(`تنبيه: ${fresh.map((a) => a.text).join("، ")}`);
+  }
+}
+
 const IMAGE_PROVIDER = { openai: "OpenAI", gemini: "Gemini" };
 
 function renderImages() {
@@ -1172,7 +1254,7 @@ function money(obj) {
 function renderServices() {
   const box = $("#services");
   box.replaceChildren();
-  for (const [key, label, note] of SERVICES) {
+  for (const [key, label, note, field] of SERVICES) {
     const has = state.keys[key];
     const div = document.createElement("div");
     div.className = "provider";
@@ -1180,7 +1262,7 @@ function renderServices() {
     div.innerHTML = `<div class="provider-head"><strong>${label}</strong>`
       + `<span class="key-state${has ? " has-key" : ""}">${has ? "الرمز محفوظ على هذا الجهاز" : "غير متصل"}</span></div>`
       + `<p class="panel-note">${note}</p>`
-      + `<label for="svc-${key}">رمز الوصول (token)</label>`
+      + `<label for="svc-${key}">${field || "رمز الوصول (token)"}</label>`
       + `<div class="row"><input id="svc-${key}" type="password" dir="ltr" autocomplete="off" spellcheck="false">`
       + `<button type="button" class="ghost" data-svc="save">احفظ</button>`
       + (has ? `<button type="button" class="ghost danger" data-svc="delete">احذف</button>` : "")
@@ -1277,6 +1359,7 @@ async function openDrawer() {
     await loadSocial();
     renderImages();
     await loadMedia();
+    await loadTrading();
     renderAgents();
     renderStoreForm();
     $("#ws-status").textContent = "";
@@ -1417,6 +1500,33 @@ document.addEventListener("DOMContentLoaded", async () => {
       line.classList.add("is-error");
     } finally {
       btn.disabled = false;
+    }
+  });
+  $("#alert-bar").addEventListener("click", async (e) => {
+    if (!e.target.closest("#btn-alerts-seen")) return;
+    try { await api("POST", "/api/trading/alerts/seen", {}); } catch (err) { /* shown again next minute */ }
+    $("#alert-bar").hidden = true;
+  });
+  $("#trade-alerts").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-alert-del]");
+    if (!btn) return;
+    try {
+      await api("DELETE", `/api/trading/alerts/${btn.dataset.alertDel}`);
+      await loadTrading();
+    } catch (err) { showHint(err.message, true); }
+  });
+  $("#btn-trade-reset").addEventListener("click", async () => {
+    const cash = Number($("#trade-cash").value);
+    if (!confirm(`تصفير المحفظة التجريبية والبدء برصيد ${cash.toLocaleString("en-US")}$؟ تُحذف المراكز والصفقات التجريبية.`)) return;
+    const line = $("#trade-status");
+    line.classList.remove("is-error");
+    try {
+      const data = await api("POST", "/api/trading/reset", { cash });
+      renderTrading(data);
+      line.textContent = "بدأت محفظة تجريبية جديدة.";
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
     }
   });
   $("#image-provider").addEventListener("change", async (e) => {
@@ -1653,5 +1763,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   try { await loadTasks(); } catch (e) { els.empty.hidden = false; showHint(e.message, true); }
   setInterval(() => loadStatus(), 30000);
+  checkAlerts();
+  setInterval(checkAlerts, 60000);
   els.input.focus();
 });

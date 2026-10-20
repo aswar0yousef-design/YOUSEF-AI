@@ -35,13 +35,15 @@ from ..integrations.stores import PLATFORM_LABEL
 from ..integrations.vercel import API as VERCEL_API
 from ..models.base import ProviderError
 from ..workspace import Services, Workspace, WorkspaceError, git, registry
-from .agents import AGENTS, IMAGE_TOOLS as IMAGE_ABILITIES, available_agents, get_agent
+from ..integrations.trade_tools import execute as execute_trade
+from .agents import AGENTS, IMAGE_TOOLS as IMAGE_ABILITIES, TRADE_TOOLS as TRADE_ABILITIES, available_agents, get_agent
 from .coder import run_coder
 from .store_manager import run_store_manager
 from .ads_manager import build_toolbox as build_ads_toolbox, run_ads_manager
 from .designer import build_toolbox as build_design_toolbox, run_designer
 from .social_publisher import build_toolbox as build_social_toolbox, run_social_publisher
 from .tech_manager import build_toolbox, run_tech_manager
+from .trading_analyst import build_toolbox as build_trade_toolbox, run_trading_analyst
 from .jsonutil import extract_json
 from .permissions import requires_approval
 
@@ -79,6 +81,12 @@ TECH_NOTE = """The "tech_manager" agent checks {targets}: security (HTTPS, heade
 SOCIAL_NOTE = """Connected social accounts: {accounts}. The "social_publisher" agent writes posts for them and publishes or schedules them after the user approves, using the user's pictures and store products. Give any step that writes posts to publish on these accounts to "social_publisher", in ONE step; "writer" only drafts text that is not published."""
 
 ADS_NOTE = """Connected Meta ad accounts: {accounts}. The "ads_manager" agent reads their campaigns and results, compares them with store sales, and proposes pausing, resuming or budget changes (the user approves each). Give any step about ads, campaigns, ad spend or ROAS to "ads_manager", in ONE step."""
+
+TRADING_NOTE = """The "trading_analyst" agent reads live prices (crypto{stocks}), computes indicators, compares symbols, and manages the user's paper-trading practice portfolio and price alerts (the user approves each paper trade and alert; it never places real orders). Give any step about markets, coins, stocks, gold, forex, charts, prices of these, or trading to "trading_analyst", in ONE step."""
+
+TRADE_HINT = re.compile(r"بيتكوين|بتكوين|إيثريوم|ايثريوم|ايثيريوم|كريبتو|عملة رقمية|عملات رقمية|العملات الرقمية|سهم|أسهم|اسهم|"
+                        r"البورصة|بورصة|تداول|شارت|الذهب|فوركس|محفظة تجريبية|المحفظة التجريبية|تنبيه سعر|"
+                        r"\b(?:btc|eth|sol|xrp|bnb|doge|usdt|rsi|macd|crypto|bitcoin|stocks?|forex|trading|nasdaq)\b", re.I)
 
 ADS_HINT = re.compile(r"إعلان|اعلان|حمل[ةه]|حملات|ميزاني|campaign|ads?\b|roas|إنفاق|انفاق", re.I)
 
@@ -159,7 +167,7 @@ def _lessons_text(lessons: list[dict]) -> tuple[list[str], str]:
 
 class Orchestrator:
     def __init__(self, memory: Memory, router: Router, settings, keystore=None, stores=None, social=None,
-                 media=None, publisher=None, ads=None, images=None):
+                 media=None, publisher=None, ads=None, images=None, market=None, paper=None):
         self.memory = memory
         self.router = router
         self.settings = settings
@@ -170,6 +178,8 @@ class Orchestrator:
         self.publisher = publisher  # integrations.publisher.SocialPublisher
         self.ads = ads              # integrations.meta_ads.AdAccounts
         self.images = images        # integrations.images.ImageMaker
+        self.market = market        # trading.market.Market
+        self.paper = paper          # trading.paper.PaperBook
         self.github_api = GITHUB_API
         self.vercel_api = VERCEL_API
         self.site_auditor = None  # audit.SiteAuditor; None = live checks over the network
@@ -318,7 +328,8 @@ class Orchestrator:
             social_step = agent.key == "social_publisher"
             ads_step = agent.key == "ads_manager"
             design_step = agent.key == "designer"
-            tool_step = store_step or tech_step or social_step or ads_step or design_step
+            trade_step = agent.key == "trading_analyst" and self.market is not None
+            tool_step = store_step or tech_step or social_step or ads_step or design_step or trade_step
             # tool agents propose their actions; the approval comes after they work, on the real proposals
             if step["needs_confirmation"] and not (coder_in_project or tool_step):
                 approved = self._wait_for_approval(task_id, step_id)
@@ -347,6 +358,9 @@ class Orchestrator:
                 if ads_step:
                     outcome = self._run_ads_step(task_id, step_id, agent, step, request, history, results,
                                                  lessons, speak, job.store)
+                elif trade_step:
+                    outcome = self._run_trade_step(task_id, step_id, agent, step, request, history, results,
+                                                   lessons, speak)
                 elif design_step:
                     outcome = self._run_design_step(task_id, step_id, agent, step, request, history, results,
                                                     lessons, speak, job.store)
@@ -413,6 +427,8 @@ class Orchestrator:
             obvious = False  # "انشر عرض العود" belongs to the social publisher
         if obvious and "ads" in connected and ADS_HINT.search(request):
             obvious = False  # "كيف حملاتي؟" belongs to the ads manager
+        if obvious and ws is None and self.market is not None and TRADE_HINT.search(request):
+            obvious = False  # "حلل البيتكوين" belongs to the trading analyst
         if len(request) <= SHORT_REQUEST and "\n" not in request and obvious:
             return [{"agent": default, "instruction": request,
                      "needs_confirmation": requires_approval(request, False)}]
@@ -440,6 +456,10 @@ class Orchestrator:
         if "ads" in connected:
             accounts = ", ".join(f'"{e["name"]}" ({e["currency"]})' for e in self.ads.entries())
             system += "\n\n" + ADS_NOTE.format(accounts=accounts)
+        if self.market is not None:
+            system += "\n\n" + TRADING_NOTE.format(
+                stocks="; US stocks, forex and gold too" if self.market.stocks_ready
+                else "; stocks, forex and gold need a free Twelve Data key the user has not added")
         if connected - {"social", "ads", "images"}:
             targets = " and ".join(t for t in (("the connected stores and their live sites" if "stores" in connected else ""),
                                                (f'the project folder "{ws.name}"' if ws else "")) if t)
@@ -546,6 +566,19 @@ class Orchestrator:
             self._fail_step(task_id, step_id, e)
             return None
         return self._finish_tool_step(task_id, step_id, res, [], [])
+
+    def _run_trade_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                        history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                        speak: bool) -> str | None:
+        """Market analysis with live data, then approval of any paper trades or alerts."""
+        system = self._system(agent, lessons, speak, abilities=TRADE_ABILITIES)
+        toolbox = build_trade_toolbox(self.market, self.paper, self.settings)
+        try:
+            res = run_trading_analyst(self.router, toolbox, system, self._step_parts(step, request, history, results))
+        except NoModelError as e:
+            self._fail_step(task_id, step_id, e)
+            return None
+        return self._finish_tool_step(task_id, step_id, res, [], toolbox.action_list())
 
     def _run_ads_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
                       history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
@@ -707,7 +740,16 @@ class Orchestrator:
         return "**الإعلانات:**\n" + "\n".join(lines)
 
     def _run_trade_actions(self, task_id: int, actions: list[dict]) -> str:
-        return self._unsupported("التداول التجريبي", actions)
+        """Paper trades at the price of this moment, and alerts. Nothing reaches a real exchange."""
+        if self.market is None or self.paper is None:
+            return self._unsupported("التداول التجريبي", actions)
+        lines = []
+        for action in actions:
+            status, note = execute_trade(action, self.market, self.paper, self.settings, task_id)
+            self.memory.update_action(action["id"], status, note)
+            title = action["payload"].get("title") or action["kind"]
+            lines.append(f"- {note}" if status == "done" else f"- لم يُنفَّذ «{title}»: {note}")
+        return "**التداول التجريبي:**\n" + "\n".join(lines)
 
     def _run_device_actions(self, task_id: int, actions: list[dict]) -> str:
         return self._unsupported("الجهاز", actions)

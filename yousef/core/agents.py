@@ -38,6 +38,10 @@ ADS_TOOLS = ("For this step you can read the user's Meta ad accounts (campaigns,
              "sales, and propose pausing, resuming or rebudgeting through the tools described below; changes happen "
              "only after the user approves. You still cannot create campaigns or ads, publish posts, send messages, "
              "buy, trade, or control the computer.")
+TRADE_TOOLS = ("For this step you can read live market prices and indicators, and the user's paper-trading portfolio "
+               "and alerts, and propose paper trades and alerts through the tools described below; they use practice "
+               "money and happen only after the user approves. You cannot place real orders, connect to exchanges or "
+               "brokers, move money, publish, or control the computer.")
 TECH_TOOLS = ("For this step you can check the user's own connected stores, their live sites and the attached project "
               "folder, and propose fixes through the tools described below. You still cannot publish posts, send "
               "messages, buy, trade, delete products, check sites that are not the user's, or control the computer.")
@@ -167,8 +171,16 @@ AGENTS: dict[str, Agent] = {
             "only as many pictures as asked.",
             phase=6,
         ),
-        Agent("trading_analyst", "محلل التداول", "Market analysis, alerts and paper trading.",
-              "analysis", available=False, phase=7),
+        Agent(
+            "trading_analyst", "محلل التداول",
+            "Analyses crypto, US stocks, forex and gold with live prices and indicators (trend, RSI, MACD, "
+            "Bollinger, ATR, support and resistance), compares symbols, manages a paper-trading practice portfolio "
+            "and price alerts after approval. Never places real orders.",
+            "analysis",
+            "Trading analyst. Be precise and sober: numbers from the tools, scenarios instead of predictions, risk "
+            "before reward. Paper trading is practice; real trades are the user's own decision.",
+            phase=7,
+        ),
         Agent("device_control", "التحكم بالجهاز", "Controls apps and files on this PC.",
               "chat", available=False, phase=7),
     ]

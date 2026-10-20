@@ -144,8 +144,11 @@ def check_dependencies(ws: Workspace, post=_osv_post, get=_osv_get) -> tuple[lis
             detail += f" ({', '.join(cves[:3])})"
         if not p["exact"]:
             detail += " — الإصدار تقريبي من package.json؛ شغّل npm install لإنشاء package-lock.json لنتيجة أدق"
-        fix = f"حدّث {p['name']} إلى {max(fixes, key=lambda v: [int(x) for x in re.findall(r'\d+', v)])} أو أحدث." if fixes \
-            else f"حدّث {p['name']} إلى أحدث إصدار، أو استبدله إن لم يعد مدعومًا."
+        if fixes:
+            newest = max(fixes, key=lambda v: [int(x) for x in re.findall(r"\d+", v)])
+            fix = f"حدّث {p['name']} إلى {newest} أو أحدث."
+        else:
+            fix = f"حدّث {p['name']} إلى أحدث إصدار، أو استبدله إن لم يعد مدعومًا."
         findings.append(Finding(severity, "dependencies", title, detail, fix, p["source"]))
     stats["vulnerable"] = len(findings)
     return findings, stats

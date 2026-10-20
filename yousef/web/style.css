@@ -509,3 +509,13 @@ h4.sub { margin: 14px 0 6px; font-size: 15px; }
 .made-media li { display: grid; gap: 4px; justify-items: start; }
 .made-media img { width: 160px; max-width: 42vw; aspect-ratio: 1; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; }
 .made-media button { font-size: 13px; }
+
+/* paper trading and price alerts */
+.trade-summary { margin: 10px 0 0; font-size: 15px; line-height: 1.8; }
+.gain { color: var(--ok); }
+.loss { color: var(--danger); }
+.alert-row.is-triggered p { color: var(--ink); }
+.alert-bar { position: sticky; top: 72px; z-index: 4; max-width: var(--column); margin: 12px auto 0; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--saffron); background: var(--saffron-tint); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.alert-bar p { margin: 0; flex: 1 1 240px; }
+.alert-bar b { color: var(--saffron); }
+@media (max-width: 640px) { .alert-bar { top: 8px; margin-inline: 16px; } }

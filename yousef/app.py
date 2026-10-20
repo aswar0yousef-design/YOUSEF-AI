@@ -18,6 +18,9 @@ from .media import MediaLibrary
 from .memory import Memory
 from .models import Router
 from .models.router import default_factory
+from .trading.alerts import AlertWatcher
+from .trading.market import Market
+from .trading.paper import PaperBook
 from .voice import VoiceEngine
 
 
@@ -36,15 +39,21 @@ class App:
     publisher: SocialPublisher
     ads: AdAccounts
     images: ImageMaker
+    market: Market
+    paper: PaperBook
+    alerts: AlertWatcher
 
     def close(self) -> None:
         self.publisher.stop()
+        self.alerts.stop()
         self.orchestrator.shutdown()
         self.memory.close()
+        self.paper.close()
 
 
 def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_backend=None,
-              store_factory=None, meta_api: str | None = None, meta_sleep=None, image_urls: dict | None = None) -> App:
+              store_factory=None, meta_api: str | None = None, meta_sleep=None, image_urls: dict | None = None,
+              market_urls: dict | None = None) -> App:
     root = Path(data_dir) if data_dir else default_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     settings = Settings(root / "settings.json")
@@ -58,9 +67,12 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     ads = AdAccounts(settings, keystore, **({"api": meta_api} if meta_api else {}))
     images = ImageMaker(settings, keystore, **(image_urls or {}))
     publisher = SocialPublisher(memory, social, media)
+    market = Market(keystore, **(market_urls or {}))
+    paper = PaperBook(root / "trading.db")
+    alerts = AlertWatcher(paper, market)
     orchestrator = Orchestrator(memory, router, settings, keystore, stores, social=social, media=media,
-                                publisher=publisher, ads=ads, images=images)
+                                publisher=publisher, ads=ads, images=images, market=market, paper=paper)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
     router.free_gpu = voice.release_gpu  # when Ollama's runner dies, speech gives the graphics card back first
     return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher, ads,
-               images)
+               images, market, paper, alerts)

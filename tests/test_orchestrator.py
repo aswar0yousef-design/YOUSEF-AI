@@ -30,7 +30,8 @@ class ParsePlanTest(unittest.TestCase):
         self.assertEqual(steps, [{"agent": "general", "instruction": "do it", "needs_confirmation": False}])
 
     def test_planned_agents_not_assigned(self):
-        self.assertEqual(parse_plan(plan_json(("trading_analyst", "trade", False)))[0]["agent"], "general")
+        self.assertEqual(parse_plan(plan_json(("device_control", "open notepad", False)))[0]["agent"], "general")
+        self.assertEqual(parse_plan(plan_json(("trading_analyst", "analyse BTC", False)))[0]["agent"], "trading_analyst")
         self.assertEqual(parse_plan(plan_json(("ads_manager", "run ads", False)))[0]["agent"], "analyst")
         # the store manager needs a connected store; without one its work goes to the analyst
         self.assertEqual(parse_plan(plan_json(("store_manager", "update products", False)))[0]["agent"], "analyst")

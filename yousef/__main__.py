@@ -106,6 +106,7 @@ def main(argv=None) -> int:
     print("  Close this window or press Ctrl+C to stop.")
 
     app.publisher.start()  # publishes Instagram posts scheduled for later
+    app.alerts.start()     # checks the user's price alerts every minute
     if app.voice.installed:
         if app.settings.get()["voice"]["preload"]:
             app.voice.load()

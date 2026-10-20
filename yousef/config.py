@@ -20,7 +20,7 @@ TASK_TYPES = ("chat", "plan", "code", "analysis", "writing")
 ROUTE_CHOICES = ("local", "cloud", "local_only")
 MODES = ("auto", "local_only", "cloud_first")
 CLOUD_PROVIDERS = ("anthropic", "openai", "gemini")
-SERVICE_KEYS = ("github", "vercel")  # tokens for connectors, stored like API keys
+SERVICE_KEYS = ("github", "vercel", "twelvedata")  # tokens for connectors, stored like API keys
 KEY_NAMES = CLOUD_PROVIDERS + SERVICE_KEYS
 
 DEFAULT_SETTINGS: dict = {
@@ -54,6 +54,8 @@ DEFAULT_SETTINGS: dict = {
     "ads": [],
     # making pictures with the user's OpenAI or Gemini key; empty model = Yousef's default list
     "images": {"provider": "auto", "openai_model": "", "gemini_model": ""},
+    # paper trading: fee per trade in percent, and the position size above which the analyst warns
+    "trading": {"fee_pct": 0.1, "max_position_pct": 25},
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "large-v3-turbo",  # small and below misunderstand Arabic too often
@@ -133,6 +135,7 @@ def _validate(merged: dict) -> dict:
     s["social"] = _validate_social(s.get("social"))
     s["ads"] = _validate_ads(s.get("ads"))
     s["images"] = _validate_images(s.get("images"))
+    s["trading"] = _validate_trading(s.get("trading"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
 
 
@@ -189,6 +192,21 @@ def _validate_images(value) -> dict:
         v[k] = str(v[k] or "").strip()
         if len(v[k]) > 80 or any(c.isspace() for c in v[k]):
             raise SettingsError(f"images.{k} must be a model id")
+    return v
+
+
+def _validate_trading(value) -> dict:
+    if not isinstance(value, dict):
+        raise SettingsError("trading must be an object")
+    v = {k: value.get(k, DEFAULT_SETTINGS["trading"][k]) for k in DEFAULT_SETTINGS["trading"]}
+    try:
+        v = {k: float(x) for k, x in v.items()}
+    except (TypeError, ValueError):
+        raise SettingsError("trading values must be numbers") from None
+    if not 0 <= v["fee_pct"] <= 2:
+        raise SettingsError("trading.fee_pct must be between 0 and 2")
+    if not 1 <= v["max_position_pct"] <= 100:
+        raise SettingsError("trading.max_position_pct must be between 1 and 100")
     return v
 
 

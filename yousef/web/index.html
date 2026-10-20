@@ -30,6 +30,7 @@
   </header>
 
   <main id="feed" class="feed">
+    <div id="alert-bar" class="alert-bar" role="status" aria-live="polite" hidden></div>
     <section id="empty" class="empty" hidden>
       <h1 class="greet">ماذا نُنجز اليوم؟</h1>
       <p class="lede">اكتب طلبك، وسيقسّمه يوسف إلى خطوات ويوزّعها على وكلائه: المساعد العام، والمبرمج، وصانع المحتوى، والمحلل.</p>
@@ -214,8 +215,30 @@
       <ul id="media-grid" class="media-grid"></ul>
     </section>
 
+    <section class="panel" id="trading-panel">
+      <h3>التداول التجريبي</h3>
+      <p class="panel-note">محلل التداول يحلل العملات الرقمية والأسهم والذهب بأسعار حية، ويدير محفظة تدريب بأموال افتراضية وتنبيهات أسعار بعد موافقتك. لا يتصل بأي منصة تداول ولا ينفّذ صفقات حقيقية. ليست نصيحة مالية.</p>
+      <p class="trade-summary" id="trade-summary"></p>
+      <h4 class="sub" id="trade-pos-title" hidden>المراكز</h4>
+      <ul id="trade-positions" class="lessons" hidden></ul>
+      <h4 class="sub" id="trade-alerts-title" hidden>التنبيهات</h4>
+      <ul id="trade-alerts" class="lessons" hidden></ul>
+      <h4 class="sub" id="trade-history-title" hidden>آخر الصفقات</h4>
+      <ul id="trade-history" class="lessons" hidden></ul>
+      <details class="add-store">
+        <summary>ابدأ من جديد</summary>
+        <label for="trade-cash">الرصيد الافتراضي (دولار)</label>
+        <div class="row">
+          <input id="trade-cash" type="number" min="100" max="10000000" step="100" value="10000" dir="ltr">
+          <button type="button" class="ghost danger" id="btn-trade-reset">صفّر المحفظة</button>
+        </div>
+        <p class="panel-note">يحذف المراكز والصفقات التجريبية ويبدأ بالرصيد الجديد. التنبيهات تبقى.</p>
+      </details>
+      <p class="status-line" id="trade-status" role="status"></p>
+    </section>
+
     <section class="panel" id="services-panel">
-      <h3>GitHub وVercel</h3>
+      <h3>الخدمات</h3>
       <div id="services"></div>
     </section>
 

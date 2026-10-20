@@ -22,6 +22,8 @@
     propose_cancel: "إلغاء منشور مقترح", list_ad_accounts: "الحسابات الإعلانية", campaigns: "الحملات",
     adsets: "المجموعات الإعلانية", daily: "النتائج اليومية", propose_pause: "إيقاف مقترح", propose_resume: "تشغيل مقترح",
     propose_budget: "ميزانية مقترحة", generate_image: "صورة جديدة",
+    price: "السعر", analyze: "تحليل الشارت", compare: "مقارنة", portfolio: "المحفظة التجريبية", list_alerts: "التنبيهات",
+    propose_trade: "صفقة تجريبية مقترحة", propose_alert: "تنبيه مقترح", propose_cancel_alert: "إلغاء تنبيه مقترح",
   };
   const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
   const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
@@ -29,6 +31,7 @@
     store_create_product: "منتج جديد", store_update_product: "تعديل", store_create_discount: "عرض جديد",
     store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
     social_cancel: "إلغاء منشور مجدول", ads_pause: "إيقاف إعلان", ads_resume: "تشغيل إعلان", ads_budget: "ميزانية إعلان",
+    trade_buy: "شراء تجريبي", trade_sell: "بيع تجريبي", trade_alert: "تنبيه سعر", trade_cancel_alert: "إلغاء تنبيه",
   };
   const TASK_STATE = {
     planning: "يخطّط…", running: "يعمل…", waiting: "ينتظر موافقتك", failed: "تعثّرت المهمة",
@@ -252,8 +255,10 @@
       if (pendingActions.length) parts.push(pendingActions.map((a) => ACTION_NAME[a.kind] || a.kind).join(" ثم "));
       const posts = pendingStore.filter((a) => a.kind.startsWith("social_")).length;
       const adsN = pendingStore.filter((a) => a.kind.startsWith("ads_")).length;
-      const otherN = pendingStore.filter((a) => a.kind.startsWith("trade_") || a.kind.startsWith("device_")).length;
-      const storeN = pendingStore.length - posts - adsN - otherN;
+      const tradeN = pendingStore.filter((a) => a.kind.startsWith("trade_")).length;
+      const otherN = pendingStore.filter((a) => a.kind.startsWith("device_")).length;
+      const storeN = pendingStore.length - posts - adsN - otherN - tradeN;
+      if (tradeN) parts.push(`${parts.length ? "و" : ""}${tradeN === 1 ? "إجراءً تجريبيًا واحدًا" : `${tradeN} إجراءات تجريبية`} (أموال افتراضية)`);
       if (adsN) parts.push(`${parts.length ? "و" : ""}${adsN === 1 ? "تغييرًا واحدًا" : `${adsN} تغييرات`} في الإعلانات`);
       if (otherN) parts.push(`${parts.length ? "و" : ""}${otherN === 1 ? "إجراءً واحدًا" : `${otherN} إجراءات`}`);
       if (storeN) {

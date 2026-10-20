@@ -32,6 +32,8 @@ from .models import ProviderError
 from .voice import AudioError, VoiceNotInstalled, VoiceNotReady
 from .integrations import StoreError
 from .integrations.stores import sales_summary
+from .trading.paper import PaperError, alert_value, describe_alert
+from .trading.indicators import fmt_price
 from .workspace import WorkspaceError, registry
 
 log = logging.getLogger("yousef.server")
@@ -301,6 +303,11 @@ class Api:
             ("POST", r"/api/social/(\d{1,30})/test", self.test_social),
             ("GET", r"/api/social/(\d{1,30})/posts", self.social_posts),
             ("DELETE", r"/api/social/(\d{1,30})", self.remove_social),
+            ("GET", r"/api/trading", self.trading),
+            ("POST", r"/api/trading/reset", self.trading_reset),
+            ("GET", r"/api/trading/alerts", self.trading_alerts),
+            ("POST", r"/api/trading/alerts/seen", self.trading_seen),
+            ("DELETE", r"/api/trading/alerts/(\d+)", self.trading_delete_alert),
             ("GET", r"/api/voice/status", self.voice_status),
             ("POST", r"/api/voice/load", self.voice_load),
             ("POST", r"/api/voice/transcribe", self.voice_transcribe),
@@ -576,6 +583,45 @@ class Api:
         except (ProviderError, KeyStoreError, SettingsError) as e:
             raise ApiError(400, str(e)) from None
         return 201, {"added": added, "accounts": self.app.social.public(), "ads": self.app.ads.public()}
+
+    # ---- paper trading ---------------------------------------------------------
+    def trading(self, query, body):
+        """The paper portfolio; with prices=1 each position is valued at the live price (cached a minute)."""
+        prices = {}
+        if query.get("prices", ["0"])[0] == "1":
+            for p in self.app.paper.positions():
+                try:
+                    prices[p["ref"]] = self.app.market.quote(p["ref"], p["kind"])["price"]
+                except (ProviderError, ValueError):
+                    pass
+        return 200, {"portfolio": self.app.paper.valuation(prices), "trades": self.app.paper.trades(10),
+                     "alerts": self._alerts(self.app.paper.alerts(("active", "triggered"), limit=30)),
+                     "stocks": self.app.market.stocks_ready}
+
+    @staticmethod
+    def _alerts(alerts: list[dict]) -> list[dict]:
+        return [dict(a, text=describe_alert(a, fmt_price),
+                     fired_text=alert_value(a["condition"], a["triggered_value"], fmt_price)) for a in alerts]
+
+    def trading_reset(self, query, body):
+        try:
+            self.app.paper.reset(float(body.get("cash") or 10000))
+        except (PaperError, TypeError, ValueError) as e:
+            raise ApiError(400, str(e)) from None
+        return self.trading({}, {})
+
+    def trading_alerts(self, query, body):
+        """Alerts that fired and the user has not seen yet (the dashboard asks every minute)."""
+        return 200, {"alerts": self._alerts(self.app.paper.unseen())}
+
+    def trading_seen(self, query, body):
+        self.app.paper.mark_seen()
+        return 200, {"ok": True}
+
+    def trading_delete_alert(self, alert_id, query, body):
+        if not self.app.paper.delete_alert(int(alert_id)):
+            raise ApiError(404, "التنبيه غير موجود")
+        return 200, {"alerts": self._alerts(self.app.paper.alerts(("active", "triggered"), limit=30))}
 
     def list_ads(self, query, body):
         return 200, {"ads": self.app.ads.public()}

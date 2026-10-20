@@ -3,7 +3,7 @@
 > اقرأ هذا الملف أولًا في أي محادثة جديدة، وأكمل من "الخطوة التالية" ولا تبدأ من الصفر.
 > قاعدة العمل: بعد كل خطوة عمل يُحدَّث هذا الملف (نسخة في المشروع `claude/yousef-ai-checkpoint.md` ونسخة داخل الكود `CHECKPOINT.md`) ويُرفع commit على GitHub.
 
-آخر تحديث: 2026-10-20 — اكتملت المرحلة 6 كلها (6.5 مدير الإعلانات، 6.6 صانع الصور) وسُلِّم الإصدار 0.7.0؛ التالي 7.1 محلل التداول
+آخر تحديث: 2026-10-20 — اكتملت 7.1 (محلل التداول: تحليل وتداول تجريبي وتنبيهات)؛ التالي 7.2 التحكم بالجهاز
 
 ## الحالة الحالية
 - المستودع: https://github.com/aswar0yousef-design/YOUSEF-AI (الفرع main). كل خطوة مكتملة = commit.
@@ -35,6 +35,19 @@
 - وكيل `ads_manager` (phase 6، يحتاج "ads"، وبدونه ← analyst) + `core/ads_manager.py` (مع StoreReader لمقارنة إيرادات Meta بمبيعات المتجر)؛ المنسّق: `ADS_NOTE`، `ADS_HINT`، `_run_ads_step`، `_run_ads_actions` (فحص تعارض الحالة/الميزانية قبل التنفيذ). `_settle` صار عامًا بمجموعات `EXTERNAL` (store_، social_، ads_، trade_، device_) ورسائل كل مجموعة.
 - الخادم: `GET/POST /api/ads`، `DELETE /api/ads/<act_id>`؛ اللوحة: قائمة الحسابات الإعلانية في «حسابات السوشيال»، بطاقات الإعلانات، أسماء الأدوات؛ VS Code كذلك.
 - `tests/test_ads.py` (7) مع إضافات الإعلانات في `meta_fake.py`. 197 اختبارًا ناجحة؛ فحص بالمتصفح.
+
+## تفاصيل 7.1 (ما بُني)
+- مصادر الأسعار (تحقق 20 أكتوبر): Binance للعملات الرقمية عبر `https://data-api.binance.vision/api/v3` (بيانات عامة فقط، بلا مفتاح: klines، ticker/24hr). Stooq صار يتطلب مفتاحًا منذ مارس 2026 فاستُبعد؛ الأسهم الأمريكية والفوركس والذهب عبر Twelve Data (`https://api.twelvedata.com`، خطة مجانية 8 طلبات/دقيقة و800/يوم، الأسهم الأمريكية فقط؛ المفتاح في ترويسة `Authorization: apikey <key>` لا في الرابط؛ الأخطاء تأتي أحيانًا بـ HTTP 200 و`status: error`). المفتاح في keys.dat باسم `twelvedata` (أُضيف إلى `SERVICE_KEYS`، ويظهر في «الإعدادات ← الخدمات» بعنوان «مفتاح API»).
+- `trading/market.py`: `resolve()` يفهم «btc»، «بيتكوين»، «BTC/USD» (← BTCUSDT)، «ETHBTC»، «aapl»، «EURUSD»، «الذهب» (← XAU/USD) مع `market` اختياري؛ `Instrument(ref, kind, source, display, quote)` و`usd`. `Market.candles(symbol, interval 15m/1h/4h/1d/1w, limit ≤500)` و`quote()` مع تخزين مؤقت 60 ثانية (`fresh=True` لتجاوزه عند التنفيذ)، ورسائل عربية للأخطاء (رمز غير موجود، مفتاح خاطئ، نفاد الرصيد، خارج الخطة المجانية).
+- `trading/indicators.py`: SMA، EMA (بذرة SMA)، RSI ويلدر، MACD(12,26,9)، بولينجر(20,2)، ATR ويلدر، قمم/قيعان متأرجحة مجمّعة كدعم/مقاومة، و`analyze()` (الاتجاه من SMA50 وميله، التقاطع الذهبي/المميت، تقاطع MACD، موقع السعر في بولينجر، ATR%، نسبة الحجم، التغير 1/7/30 شمعة، آخر 10 إغلاقات)؛ `fmt_price`، `fmt_pct`.
+- `trading/paper.py`: `PaperBook` في `trading.db` منفصلة (account برصيد افتراضي 10,000$، positions بتكلفة شاملة الرسوم، trades مع الربح المحقق، alerts: price_above/below وrsi_above/below، الحالة active/triggered/cancelled، seen). الشراء بمبلغ بالدولار شامل الرسوم، البيع بكمية أو الكل، `valuation(prices)`، `reset(cash)` (التنبيهات تبقى)، حد 50 تنبيهًا فعّالًا، المحفظة بالدولار فقط (USD/USDT/USDC/FDUSD). `describe_alert`، `alert_value`.
+- `trading/alerts.py`: `AlertWatcher.check()` (سعر واحد لكل رمز وRSI واحد لكل رمز/إطار في كل جولة؛ يُطلق التنبيه مرة واحدة؛ `listeners`) وخيط كل 60 ثانية يبدأ من `__main__`.
+- `integrations/trade_tools.py`: `TradeToolbox` (price، analyze، compare حتى 6، portfolio، list_alerts، propose_trade، propose_alert، propose_cancel_alert)؛ تحقق: وقف الخسارة تحت السعر وجني الأرباح فوقه للشراء، النقد يكفي، تحذيرات (بلا وقف خسارة، المركز > `trading.max_position_pct` 25% من المحفظة، العائد أقل من المخاطرة). `execute()`: الشراء/البيع بسعر حي جديد، وإن تحرك أكثر من 3% منذ الاقتراح ← «conflict»؛ بعد الشراء يُنشئ تنبيهَي وقف الخسارة وجني الأرباح. لا يوجد أي مسار لأمر حقيقي.
+- وكيل `trading_analyst` متاح دائمًا (phase 7، analysis، `TRADE_TOOLS`)؛ `core/trading_analyst.py` (حتى 12 أداة، يذكر توفر مفتاح Twelve Data، ويُلحق «هذا تحليل تعليمي وليس نصيحة مالية…» إن نسيه النموذج). المنسّق: `TRADING_NOTE` للمخطِّط دائمًا، `TRADE_HINT` يمرّر الطلبات القصيرة («حلل البيتكوين») إلى المخطِّط، `_run_trade_step`، و`_run_trade_actions` الحقيقي. الإعداد `trading` (`fee_pct` 0.1، `max_position_pct` 25).
+- الخادم: `GET /api/trading[?prices=1]`، `POST /api/trading/reset`، `GET /api/trading/alerts` (المتحققة غير المقروءة)، `POST /api/trading/alerts/seen`، `DELETE /api/trading/alerts/<id>`.
+- اللوحة: بطاقات الصفقات والتنبيهات (rows)، بوابة «كلها تجريبية بأموال افتراضية…»، شريط تنبيهات لاصق أعلى المحادثة يُفحص كل دقيقة (ويُقرأ بالصوت في الاستماع الدائم عبر `window.YousefVoice`)، قسم «التداول التجريبي» في الإعدادات (القيمة، النقد، الربح/الخسارة، المراكز، التنبيهات مع الحذف، آخر الصفقات، تصفير المحفظة)، و«الخدمات» بدل «GitHub وVercel». VS Code: أسماء الأدوات والبطاقات والبوابة.
+- إصلاح جانبي: `audit/deps.py` كان فيه f-string بشرطة مائلة عكسية لا يعمل إلا على Python 3.12+؛ صار يعمل على 3.10 (README يطلب 3.10+). الكود كله يُترجم الآن على 3.10 و3.11 (Python 3.10 متاح في البيئة عبر `uv python find 3.10`).
+- `tests/market_fake.py` (Binance وTwelve Data وهميان) و`tests/test_trading.py` (12). المجموع 215 اختبارًا ناجحة؛ فحص بالمتصفح (فاتح/داكن/جوال، بلا أخطاء ولا تمرير أفقي).
 
 ## تفاصيل 6.6 (ما بُني) — الإصدار 0.7.0
 - `integrations/images.py`: `ImageMaker(settings, keystore, openai_url, gemini_url)`: `providers()` حسب الإعداد `images.provider` (auto/openai/gemini/off) والمفاتيح المحفوظة؛ `make(prompt, shape, source)` ← `{data, mime, provider, model}`. OpenAI: `POST /v1/images/generations` أو `/images/edits` (JSON مع `images: [{image_url: data URL}]`)، `output_format: jpeg`، `quality: medium`، المقاسات: مربع 1024، عرضي 1536x1024، طولي 1024x1280 (4:5) لعائلة gpt-image-2 و1024 لغيرها (2:3 يرفضه إنستغرام). Gemini: Interactions API `POST /v1beta/interactions` مع `response_format {type: image, mime_type, aspect_ratio}`، وعند 404 `models/<m>:generateContent` مع `responseModalities` و`imageConfig.aspectRatio`. `find_image` يبحث عن أول صورة base64 بأي شكل للرد. ترتيب النماذج: المختار في الإعداد `images.openai_model`/`gemini_model` ثم الافتراضية (gpt-image-2.5-flare، gpt-image-2، gpt-image-1.5، gpt-image-1 / gemini-nano-banana-2.1، gemini-3.1-flash-image، gemini-2.5-flash-image)؛ خطأ «نموذج» ينتقل للتالي، وخطأ مفتاح/حصة ينتقل للمزوّد التالي.
@@ -151,7 +164,7 @@
 - [ ] المرحلة 7: محلل التداول، التحكم بالجهاز، الوصول من الجوال، المستمع الصوتي بدون متصفح ← 1.0.0
 
 ## المرحلة 7 — الخطة
-- [ ] 7.1 «محلل التداول»: بيانات السوق (العملات الرقمية من واجهة Binance العامة للأسعار بلا مفتاح؛ الأسهم من مصدر مجاني يُتحقق منه عند البناء)، مؤشرات بـ Python خالص (SMA، EMA، RSI، MACD، Bollinger، ATR، دعم/مقاومة)، محفظة تجريبية (رصيد افتراضي، صفقات `trade_buy`/`trade_sell` بموافقة وبسعر السوق الحالي مع رسوم)، تنبيهات سعر/مؤشر (`trade_alert` بموافقة، مجدول يفحصها ما دام يوسف شغّالًا، وتظهر في اللوحة). لا تداول حقيقي أبدًا، وتنبيه «ليست نصيحة مالية».
+- [x] 7.1 «محلل التداول»: بيانات السوق (العملات الرقمية من واجهة Binance العامة للأسعار بلا مفتاح؛ الأسهم من مصدر مجاني يُتحقق منه عند البناء)، مؤشرات بـ Python خالص (SMA، EMA، RSI، MACD، Bollinger، ATR، دعم/مقاومة)، محفظة تجريبية (رصيد افتراضي، صفقات `trade_buy`/`trade_sell` بموافقة وبسعر السوق الحالي مع رسوم)، تنبيهات سعر/مؤشر (`trade_alert` بموافقة، مجدول يفحصها ما دام يوسف شغّالًا، وتظهر في اللوحة). لا تداول حقيقي أبدًا، وتنبيه «ليست نصيحة مالية».
 - [ ] 7.2 «التحكم بالجهاز»: واجهة خلفية قابلة للاستبدال (ويندوز: فتح برنامج من قائمة مسموحة، رابط، مجلد؛ الصوت ووسائط التشغيل بمفاتيح النظام؛ قفل الشاشة؛ معلومات النظام للقراءة)، كل إجراء `device_*` بموافقة، بلا حذف ملفات ولا أوامر عشوائية ولا إيقاف تشغيل.
 - [ ] 7.3 الوصول من الجوال: مستمع ثانٍ على الشبكة المنزلية يُفعَّل يدويًا، اقتران برمز من 6 أرقام يظهر على الكمبيوتر (صالح 10 دقائق، محاولات محدودة)، جلسة بملف تعريف (HttpOnly، SameSite=Strict) لكل جهاز مع الإلغاء، واجهة جوال + manifest؛ وTailscale للوصول من خارج البيت بـ https.
 - [ ] 7.4 المستمع الصوتي بدون متصفح: `sounddevice` اختياري، تقطيع بالطاقة، كلمة التنبيه بـ Whisper الموجود، الرد بصوت ويندوز (System.Speech)؛ ثم تحقق شامل وإصدار 1.0.0.
@@ -171,9 +184,10 @@
 - تجربة عرض بكود وباقة على متجر تجريبي (أول تجربة حقيقية لـ productBundleCreate وdiscountCodeBasicCreate)، مع صلاحيتي read_discounts/write_discounts في Shopify.
 - «افحص متجري» و«افحص المشروع» (أول تجربة حقيقية لفحص الموقع وOSV وwordpress.org من جهاز المستخدم).
 - ربط صفحة فيسبوك (+ إنستغرام تجاري) برمز Meta، ثم منشور تجريبي فوري ومنشور مجدول (أول تجربة حقيقية لـ Graph API v26.0، وطريقة الصورة غير المنشورة لإنستغرام).
+- محلل التداول: «حلل البيتكوين» (أول تجربة حقيقية لـ data-api.binance.vision من جهاز المستخدم)، ثم مفتاح Twelve Data و«كيف سهم أبل؟».
 - مدير الإعلانات برمز فيه ads_read/ads_management (أول تجربة حقيقية لـ Marketing API)، وصانع الصور بمفتاح OpenAI أو Gemini (أول تجربة حقيقية لواجهتي الصور).
 - عند أي خطأ: إرسال `%LOCALAPPDATA%\YousefAI\yousef.log`.
 
 ## الخطوة التالية
-1. 7.1 محلل التداول (انظر «المرحلة 7 — الخطة»): `trading/market.py`، `trading/indicators.py`، `trading/paper.py` (جداول المحفظة والصفقات والتنبيهات)، `integrations/trade_tools.py`، `core/trading_analyst.py`، وتنفيذ `_run_trade_actions` بدل `_unsupported`، ولوحة «التداول التجريبي».
-2. ثم 7.2 ← 7.3 ← 7.4 ← 1.0.0.
+1. 7.2 التحكم بالجهاز: `device/` بواجهة خلفية قابلة للاستبدال (ويندوز حقيقية + وهمية للاختبار)، أدوات قراءة بلا موافقة (معلومات النظام، البرامج المسموحة) وإجراءات `device_*` بموافقة (فتح برنامج من قائمة مسموحة/رابط/مجلد، الصوت والوسائط، قفل الشاشة)، `_run_device_actions` الحقيقي، وكيل `device_control` متاح، ولوحة «التحكم بالجهاز» (البرامج المسموحة).
+2. ثم 7.3 ← 7.4 ← 1.0.0.
