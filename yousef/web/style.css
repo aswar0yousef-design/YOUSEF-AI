@@ -524,3 +524,15 @@ h4.sub { margin: 14px 0 6px; font-size: 15px; }
 .chips-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .chips-list .chip { display: inline-flex; align-items: center; gap: 4px; }
 .chips-list .chip button { font-size: 16px; line-height: 1; padding: 0 2px; }
+
+/* the phone pairing page */
+.pair-page { display: grid; place-items: center; min-height: 100vh; padding: 16px; }
+.pair { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; }
+.pair h1 { font-family: var(--font-display); font-size: 30px; margin: 12px 0 6px; }
+.pair form { display: grid; gap: 6px; margin-top: 12px; }
+.pair input { font-size: 20px; }
+.pair #code { letter-spacing: 6px; text-align: center; }
+.pair button { margin-top: 10px; }
+.remote-code { font: 700 32px/1 var(--font-code); letter-spacing: 6px; margin: 10px 0 2px; color: var(--door); }
+.remote-urls { margin: 6px 0 0; padding: 0; list-style: none; }
+.remote-urls li { font-family: var(--font-code); font-size: 15px; }

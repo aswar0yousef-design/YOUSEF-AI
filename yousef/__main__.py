@@ -107,6 +107,15 @@ def main(argv=None) -> int:
 
     app.publisher.start()  # publishes Instagram posts scheduled for later
     app.alerts.start()     # checks the user's price alerts every minute
+    remote = app.settings.get()["remote"]
+    if remote["enabled"]:
+        try:
+            server.api.listener.start(remote["port"])
+            from .remote import lan_addresses
+            for addr in lan_addresses():
+                print(f"  Phone:     http://{addr}:{remote['port']}/")
+        except Exception as e:  # the dashboard still works; the reason shows in Settings
+            print(f"  Phone access could not start: {getattr(e, 'message', e)}")
     if app.voice.installed:
         if app.settings.get()["voice"]["preload"]:
             app.voice.load()
@@ -122,6 +131,7 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        server.api.listener.stop()
         server.server_close()
         app.close()
         print(f"{APP_TITLE} stopped.")

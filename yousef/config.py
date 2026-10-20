@@ -58,6 +58,8 @@ DEFAULT_SETTINGS: dict = {
     "trading": {"fee_pct": 0.1, "max_position_pct": 25},
     # device control: programs the user added to the allowed list (Yousef has its own defaults)
     "device": {"apps": []},
+    # using Yousef from the phone on the home network: off until the user turns it on
+    "remote": {"enabled": False, "port": 8766},
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "large-v3-turbo",  # small and below misunderstand Arabic too often
@@ -139,6 +141,7 @@ def _validate(merged: dict) -> dict:
     s["images"] = _validate_images(s.get("images"))
     s["trading"] = _validate_trading(s.get("trading"))
     s["device"] = _validate_device(s.get("device"))
+    s["remote"] = _validate_remote(s.get("remote"), s["port"])
     return {k: s[k] for k in DEFAULT_SETTINGS}
 
 
@@ -195,6 +198,17 @@ def _validate_images(value) -> dict:
         v[k] = str(v[k] or "").strip()
         if len(v[k]) > 80 or any(c.isspace() for c in v[k]):
             raise SettingsError(f"images.{k} must be a model id")
+    return v
+
+
+def _validate_remote(value, main_port: int) -> dict:
+    if not isinstance(value, dict):
+        raise SettingsError("remote must be an object")
+    v = {k: value.get(k, DEFAULT_SETTINGS["remote"][k]) for k in DEFAULT_SETTINGS["remote"]}
+    if not isinstance(v["enabled"], bool):
+        raise SettingsError("remote.enabled must be true or false")
+    if not isinstance(v["port"], int) or not 1024 <= v["port"] <= 65535 or v["port"] == main_port:
+        raise SettingsError("منفذ الجوال بين 1024 و65535 ومختلف عن منفذ اللوحة")
     return v
 
 

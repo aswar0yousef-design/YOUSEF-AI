@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0D6E79">
+  <title>اربط جوالك — YOUSEF AI</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/pair.js" defer></script>
+</head>
+<body class="pair-page">
+  <main class="pair">
+    <img src="/icon.svg" alt="" width="64" height="64">
+    <h1>اربط هذا الجهاز بيوسف</h1>
+    <p class="panel-note">على الكمبيوتر افتح يوسف ← الإعدادات ← «الجوال»، واضغط «رمز اقتران جديد»، ثم اكتب الرمز هنا.</p>
+    <form id="pair-form" autocomplete="off">
+      <label for="code">رمز الاقتران (6 أرقام)</label>
+      <input id="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" dir="ltr" required autofocus>
+      <label for="name">اسم هذا الجهاز</label>
+      <input id="name" maxlength="40" placeholder="مثال: جوالي">
+      <button type="submit" class="primary">اربط</button>
+      <p class="status-line" id="pair-status" role="status"></p>
+    </form>
+  </main>
+</body>
+</html>

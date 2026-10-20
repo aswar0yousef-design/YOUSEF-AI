@@ -32,6 +32,7 @@ from .models import ProviderError
 from .voice import AudioError, VoiceNotInstalled, VoiceNotReady
 from .integrations import StoreError
 from .integrations.stores import sales_summary
+from .remote import COOKIE, RemoteError, cookie_token, lan_addresses
 from .trading.paper import PaperError, alert_value, describe_alert
 from .trading.indicators import fmt_price
 from .workspace import WorkspaceError, registry
@@ -46,7 +47,28 @@ STATIC_FILES = {
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
     "/voice-worklet.js": ("voice-worklet.js", "text/javascript; charset=utf-8"),
+    "/pair": ("pair.html", "text/html; charset=utf-8"),
+    "/pair.js": ("pair.js", "text/javascript; charset=utf-8"),
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/icon-192.png": ("icon-192.png", "image/png"),
+    "/icon-512.png": ("icon-512.png", "image/png"),
 }
+# what a paired phone may change; everything else (keys, folders, connections, settings, the phone
+# listener itself, stopping Yousef) stays on the PC. Reading is allowed, except the pairing screen.
+REMOTE_WRITES = [re.compile(p) for p in (
+    r"POST /api/tasks", r"POST /api/tasks/\d+/(?:cancel|feedback)", r"POST /api/steps/\d+/decision",
+    r"POST /api/conversation/new", r"POST /api/media", r"POST /api/voice/(?:load|transcribe)", r"POST /api/lessons",
+    r"DELETE /api/lessons/\d+", r"POST /api/social/posts/\d+/(?:cancel|publish)", r"POST /api/trading/alerts/seen",
+    r"DELETE /api/trading/alerts/\d+", r"POST /api/stores/[0-9a-f]{8}/test", r"POST /api/social/\d{1,30}/test")]
+REMOTE_HIDDEN = re.compile(r"/api/remote(?:/.*)?")
+
+
+def remote_allowed(method: str, path: str) -> bool:
+    if REMOTE_HIDDEN.fullmatch(path):
+        return False
+    if method == "GET":
+        return True
+    return any(p.fullmatch(f"{method} {path}") for p in REMOTE_WRITES)
 CSP = ("default-src 'self'; img-src 'self' data: https:; style-src 'self'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 MAX_BODY = 1_000_000
@@ -78,8 +100,11 @@ class Server(ThreadingHTTPServer):
         self.server_port = port
 
 
-def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
+def make_server(app, port: int, host: str = "127.0.0.1", remote=None) -> Server:
+    """The dashboard server on this PC; with `remote` (a RemoteAccess), the phone listener on the home network."""
     api = Api(app)
+    if remote is None:
+        api.listener = RemoteListener(app, port)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = f"YousefAI/{__version__}"
@@ -111,6 +136,18 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
                     raise ApiError(404, "not found")
                 if method != "GET":
                     self._check_write_request()
+                if remote is not None:
+                    if method == "POST" and parsed.path == "/api/remote/pair":
+                        return self._pair()
+                    device = remote.check(cookie_token(self.headers.get("Cookie")), self.client_address[0])
+                    if device is None:
+                        raise ApiError(401, "اربط هذا الجهاز بيوسف أولًا")
+                    if method == "POST" and parsed.path == "/api/remote/logout":
+                        self._read_json()  # an unread body would be parsed as the next request
+                        remote.revoke(device["id"])
+                        return self._json(200, {"ok": True}, {"Set-Cookie": self._cookie("", 0)})
+                    if not remote_allowed(method, parsed.path):
+                        raise ApiError(403, "هذا متاح من يوسف على الكمبيوتر فقط")
                 if method == "GET" and MEDIA_FILE.fullmatch(parsed.path):
                     return self._media(MEDIA_FILE.fullmatch(parsed.path).group(1))
                 if method == "POST" and parsed.path in AUDIO_ROUTES:
@@ -137,6 +174,11 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
 
         def _check_host(self):
             host = (self.headers.get("Host") or "").lower()
+            if remote is not None:
+                # the phone opens this PC by its address or a Tailscale name; the session cookie is the guard
+                if not host or len(host) > 255 or any(c in host for c in "/\\ @"):
+                    raise ApiError(400, "bad host")
+                return
             allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
             if host not in allowed:
                 raise ApiError(403, "forbidden host")
@@ -146,9 +188,30 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
                 raise ApiError(403, "missing client header")
             origin = self.headers.get("Origin")
             if origin:
+                if remote is not None:
+                    hosts = {(self.headers.get(h) or "").lower() for h in ("Host", "X-Forwarded-Host")} - {""}
+                    netloc = urlparse(origin.lower()).netloc
+                    # behind "tailscale serve" the request comes from this PC for the device's *.ts.net name
+                    via_tailscale = self.client_address[0] == "127.0.0.1" and netloc.endswith(".ts.net")
+                    if netloc not in hosts and not via_tailscale:
+                        raise ApiError(403, "forbidden origin")
+                    return
                 port = self.server.server_port
                 if origin.lower() not in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
                     raise ApiError(403, "forbidden origin")
+
+        def _cookie(self, token: str, max_age: int) -> str:
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""
+            return f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
+
+        def _pair(self):
+            body = self._read_json()
+            try:
+                token = remote.pair(str(body.get("code") or ""), str(body.get("name") or ""), self.client_address[0])
+            except RemoteError as e:
+                raise ApiError(403, str(e)) from None
+            log.info("a phone was paired from %s", self.client_address[0])
+            self._json(200, {"ok": True}, {"Set-Cookie": self._cookie(token, 365 * 86400)})
 
         def _read_json(self) -> dict:
             length = int(self.headers.get("Content-Length") or 0)
@@ -207,9 +270,9 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
             if self.command != "HEAD":
                 self.wfile.write(body)
 
-        def _json(self, status: int, payload):
+        def _json(self, status: int, payload, extra: dict | None = None):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self._send(status, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            self._send(status, body, "application/json; charset=utf-8", dict({"Cache-Control": "no-store"}, **(extra or {})))
 
         def _static(self, path: str):
             name, ctype = STATIC_FILES[path]
@@ -217,13 +280,60 @@ def make_server(app, port: int, host: str = "127.0.0.1") -> Server:
             self._send(200, body, ctype, {"Content-Security-Policy": CSP, "Cache-Control": "no-cache"})
 
     server = Server((host, port), Handler)
+    server.api = api
 
     def stop():
+        if getattr(api, "listener", None):
+            api.listener.stop()
         server.shutdown()
         server.server_close()  # free the port for the copy that asked
 
     api.on_stop = stop
     return server
+
+
+class RemoteListener:
+    """Starts and stops the phone listener (all network interfaces) next to the dashboard server."""
+
+    def __init__(self, app, main_port: int):
+        self.app = app
+        self.main_port = main_port
+        self.server: Server | None = None
+        self.error = ""
+        self._lock = threading.Lock()
+
+    @property
+    def running(self) -> bool:
+        return self.server is not None
+
+    def start(self, port: int | None = None) -> None:
+        port = port or self.app.settings.get()["remote"]["port"]
+        with self._lock:
+            if self.server is not None and self.server.server_port == port:
+                return
+            self._stop()
+            if port == self.main_port:
+                self.error = "منفذ الجوال يجب أن يختلف عن منفذ اللوحة"
+                raise ApiError(400, self.error)
+            try:
+                self.server = make_server(self.app, port, "0.0.0.0", remote=self.app.remote)
+            except OSError as e:
+                self.error = f"تعذّر فتح المنفذ {port}: {e.strerror or e}"
+                raise ApiError(409, self.error) from None
+            self.error = ""
+            threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.5},
+                             name="yousef-remote", daemon=True).start()
+            log.info("phone listener on port %s", port)
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stop()
+
+    def _stop(self) -> None:
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
 
 
 def _clean_context(raw) -> dict:
@@ -303,6 +413,10 @@ class Api:
             ("POST", r"/api/social/(\d{1,30})/test", self.test_social),
             ("GET", r"/api/social/(\d{1,30})/posts", self.social_posts),
             ("DELETE", r"/api/social/(\d{1,30})", self.remove_social),
+            ("GET", r"/api/remote", self.remote_status),
+            ("PUT", r"/api/remote", self.remote_update),
+            ("POST", r"/api/remote/code", self.remote_code),
+            ("DELETE", r"/api/remote/devices/([0-9a-f]{12})", self.remote_revoke),
             ("GET", r"/api/device", self.device),
             ("POST", r"/api/device/apps", self.device_add_app),
             ("DELETE", r"/api/device/apps/([a-z0-9][a-z0-9_\-]{0,39})", self.device_remove_app),
@@ -586,6 +700,39 @@ class Api:
         except (ProviderError, KeyStoreError, SettingsError) as e:
             raise ApiError(400, str(e)) from None
         return 201, {"added": added, "accounts": self.app.social.public(), "ads": self.app.ads.public()}
+
+    # ---- phone access (on the PC only) ------------------------------------------
+    def remote_status(self, query, body):
+        s = self.app.settings.get()["remote"]
+        listener = getattr(self, "listener", None)
+        port = s["port"]
+        return 200, {"enabled": s["enabled"], "port": port, "running": bool(listener and listener.running),
+                     "error": listener.error if listener else "",
+                     "urls": [f"http://{a}:{port}/" for a in lan_addresses()],
+                     "code": self.app.remote.code_status(), "devices": self.app.remote.devices()}
+
+    def remote_update(self, query, body):
+        listener = getattr(self, "listener", None)
+        if listener is None:
+            raise ApiError(404, "not found")
+        try:
+            s = self.app.settings.update({"remote": {k: body[k] for k in ("enabled", "port") if k in body}})["remote"]
+        except SettingsError as e:
+            raise ApiError(400, str(e)) from None
+        if s["enabled"]:
+            listener.start(s["port"])
+        else:
+            listener.stop()
+        return self.remote_status({}, {})
+
+    def remote_code(self, query, body):
+        self.app.remote.new_code()
+        return self.remote_status({}, {})
+
+    def remote_revoke(self, device_id, query, body):
+        if not self.app.remote.revoke(device_id):
+            raise ApiError(404, "الجهاز غير موجود")
+        return self.remote_status({}, {})
 
     # ---- device control --------------------------------------------------------
     def device(self, query, body):

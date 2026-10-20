@@ -101,6 +101,9 @@ async function api(method, path, body) {
   }
   let data = {};
   try { data = await res.json(); } catch (e) { /* empty body */ }
+  if (res.status === 401 && location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
+    location.replace("/pair");  // a phone that is not paired (or was removed)
+  }
   if (!res.ok) throw new Error(data.error || `خطأ ${res.status}`);
   return data;
 }
@@ -1204,6 +1207,46 @@ async function checkAlerts() {
   }
 }
 
+const REMOTE_HERE = location.hostname !== "127.0.0.1" && location.hostname !== "localhost";
+
+async function loadRemote() {
+  if (REMOTE_HERE) {  // on the phone: these controls belong to the PC
+    $("#remote-panel").hidden = true;
+    return;
+  }
+  try { renderRemote(await api("GET", "/api/remote")); } catch (e) { $("#remote-status").textContent = e.message; }
+}
+
+function renderRemote(r) {
+  $("#remote-enabled").checked = r.enabled;
+  $("#remote-on").hidden = !r.running;
+  const line = $("#remote-status");
+  line.classList.toggle("is-error", Boolean(r.error));
+  line.textContent = r.error || (r.running ? `يستمع على المنفذ ${r.port}.` : "");
+  const urls = $("#remote-urls");
+  urls.replaceChildren(...(r.urls.length ? r.urls : ["لم يُعثر على عنوان الشبكة؛ تأكد أن الكمبيوتر متصل بالواي فاي أو الكابل."]).map((u) => {
+    const li = document.createElement("li");
+    li.textContent = u;
+    li.dir = /^http/.test(u) ? "ltr" : "rtl";
+    return li;
+  }));
+  $("#remote-code").hidden = $("#remote-code-note").hidden = !r.code;
+  if (r.code) {
+    $("#remote-code").textContent = r.code.code;
+    $("#remote-code-note").textContent = `اكتبه في الجوال خلال ${Math.ceil(r.code.expires_in / 60)} دقائق. يصلح لجهاز واحد.`;
+  }
+  const ul = $("#remote-devices");
+  ul.replaceChildren();
+  $("#remote-devices-title").hidden = ul.hidden = r.devices.length === 0;
+  for (const d of r.devices) {
+    const li = document.createElement("li");
+    li.className = "ws-item";
+    li.innerHTML = `<div class="ws-head"><p><strong dir="auto">${esc(d.name)}</strong> <span class="muted">آخر استخدام ${esc(whenLabel(new Date(d.last_seen * 1000).toISOString()))}</span></p>`
+      + `<button type="button" class="link" data-remote-del="${esc(d.id)}">أزل</button></div>`;
+    ul.appendChild(li);
+  }
+}
+
 async function loadDevice() {
   try { renderDevice(await api("GET", "/api/device")); } catch (e) { $("#device-info").textContent = e.message; }
 }
@@ -1399,6 +1442,7 @@ async function openDrawer() {
     await loadMedia();
     await loadTrading();
     await loadDevice();
+    await loadRemote();
     renderAgents();
     renderStoreForm();
     $("#ws-status").textContent = "";
@@ -1540,6 +1584,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     } finally {
       btn.disabled = false;
     }
+  });
+  $("#remote-enabled").addEventListener("change", async (e) => {
+    const line = $("#remote-status");
+    try {
+      renderRemote(await api("PUT", "/api/remote", { enabled: e.target.checked }));
+    } catch (err) {
+      e.target.checked = false;
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    }
+  });
+  $("#btn-remote-code").addEventListener("click", async () => {
+    try { renderRemote(await api("POST", "/api/remote/code", {})); } catch (err) { showHint(err.message, true); }
+  });
+  $("#remote-devices").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-remote-del]");
+    if (!btn || !confirm("إزالة هذا الجهاز؟ سيحتاج رمز اقتران جديدًا ليعود.")) return;
+    try { renderRemote(await api("DELETE", `/api/remote/devices/${btn.dataset.remoteDel}`)); } catch (err) { showHint(err.message, true); }
   });
   $("#btn-add-app").addEventListener("click", async () => {
     const line = $("#device-status");

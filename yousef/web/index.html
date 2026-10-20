@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>YOUSEF AI</title>
+  <meta name="theme-color" content="#0D6E79">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
   <script src="/voice.js" defer></script>
@@ -255,6 +258,23 @@
         <button type="button" class="primary" id="btn-add-app">أضف</button>
       </details>
       <p class="status-line" id="device-status" role="status"></p>
+    </section>
+
+    <section class="panel" id="remote-panel">
+      <h3>الجوال</h3>
+      <p class="panel-note">استخدم يوسف من جوالك على شبكة البيت نفسها: اكتب طلباتك، ووافق على الاقتراحات، وأرفق صورًا من الكاميرا. الإعدادات والمفاتيح تبقى على الكمبيوتر فقط.</p>
+      <label class="check"><input type="checkbox" id="remote-enabled"> شغّل الوصول من الجوال</label>
+      <div id="remote-on" hidden>
+        <p class="panel-note">افتح أحد هذه الروابط في متصفح الجوال (أول مرة قد يسألك ويندوز عن جدار الحماية: اسمح لـ Python على «الشبكات الخاصة» فقط):</p>
+        <ul class="remote-urls" id="remote-urls"></ul>
+        <button type="button" class="ghost" id="btn-remote-code">رمز اقتران جديد</button>
+        <p class="remote-code" id="remote-code" dir="ltr" hidden></p>
+        <p class="panel-note" id="remote-code-note" hidden></p>
+        <h4 class="sub" id="remote-devices-title" hidden>الأجهزة المرتبطة</h4>
+        <ul id="remote-devices" class="lessons" hidden></ul>
+        <p class="panel-note">الاتصال داخل البيت غير مشفّر (http)، فاستخدمه على شبكتك الخاصة فقط. للوصول من خارج البيت وبتشفير، ولاستخدام الميكروفون من الجوال: ثبّت Tailscale على الكمبيوتر والجوال، ثم شغّل على الكمبيوتر <code dir="ltr">tailscale serve --bg 8766</code> وافتح الرابط الذي يعطيك إياه (https).</p>
+      </div>
+      <p class="status-line" id="remote-status" role="status"></p>
     </section>
 
     <section class="panel" id="services-panel">

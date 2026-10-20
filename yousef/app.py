@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .config import Settings, data_dir as default_data_dir
 from .device import Device
+from .remote import RemoteAccess
 from .core import Orchestrator
 from .integrations import Stores
 from .integrations.images import ImageMaker
@@ -44,6 +45,7 @@ class App:
     paper: PaperBook
     alerts: AlertWatcher
     device: Device
+    remote: RemoteAccess
 
     def close(self) -> None:
         self.publisher.stop()
@@ -72,6 +74,7 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     market = Market(keystore, **(market_urls or {}))
     paper = PaperBook(root / "trading.db")
     alerts = AlertWatcher(paper, market)
+    remote = RemoteAccess(root / "remote.json")
     device = Device(settings, device_backend, device_home,
                     workspaces=lambda: [w["path"] for w in settings.get()["workspaces"]])
     orchestrator = Orchestrator(memory, router, settings, keystore, stores, social=social, media=media,
@@ -80,4 +83,4 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
     router.free_gpu = voice.release_gpu  # when Ollama's runner dies, speech gives the graphics card back first
     return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher, ads,
-               images, market, paper, alerts, device)
+               images, market, paper, alerts, device, remote)
