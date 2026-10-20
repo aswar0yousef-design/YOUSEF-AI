@@ -519,3 +519,8 @@ h4.sub { margin: 14px 0 6px; font-size: 15px; }
 .alert-bar p { margin: 0; flex: 1 1 240px; }
 .alert-bar b { color: var(--saffron); }
 @media (max-width: 640px) { .alert-bar { top: 8px; margin-inline: 16px; } }
+
+/* device control: the allowed programs */
+.chips-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chips-list .chip { display: inline-flex; align-items: center; gap: 4px; }
+.chips-list .chip button { font-size: 16px; line-height: 1; padding: 0 2px; }

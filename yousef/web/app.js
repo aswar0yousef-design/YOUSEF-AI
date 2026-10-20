@@ -31,6 +31,9 @@ const TOOL_LABEL = {
   site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود", check_dependencies: "فحص الحزم",
   price: "السعر", analyze: "تحليل الشارت", compare: "مقارنة", portfolio: "المحفظة التجريبية", list_alerts: "التنبيهات",
   propose_trade: "صفقة تجريبية مقترحة", propose_alert: "تنبيه مقترح", propose_cancel_alert: "إلغاء تنبيه مقترح",
+  system_info: "معلومات الجهاز", running_apps: "البرامج المفتوحة", list_apps: "البرامج المسموحة",
+  propose_open_app: "فتح برنامج", propose_open_url: "فتح رابط", propose_open_folder: "فتح مجلد", propose_open_file: "فتح ملف",
+  propose_volume: "الصوت", propose_media: "الوسائط", propose_close_app: "إغلاق برنامج", propose_lock: "قفل الشاشة",
 };
 const MEDIA_NAME = /^media:img-[0-9a-f]{16}\.(?:jpg|png)$/;
 const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
@@ -44,6 +47,8 @@ const PROPOSAL_KIND = {
   store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
   social_cancel: "إلغاء منشور مجدول", ads_pause: "إيقاف إعلان", ads_resume: "تشغيل إعلان", ads_budget: "ميزانية إعلان",
   trade_buy: "شراء تجريبي", trade_sell: "بيع تجريبي", trade_alert: "تنبيه سعر", trade_cancel_alert: "إلغاء تنبيه",
+  device_open_app: "فتح برنامج", device_open_url: "فتح رابط", device_open_folder: "فتح مجلد", device_open_file: "فتح ملف",
+  device_volume: "الصوت", device_media: "الوسائط", device_close_app: "إغلاق برنامج", device_lock: "قفل الشاشة",
 };
 const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
 const OUTSIDE = ["store_", "social_", "ads_", "trade_", "device_"];
@@ -283,6 +288,10 @@ function stepHTML(step, task, hideOutput) {
       how = pendingProposals.length > 1 ? "أزل علامة ما لا تريد نشره، ثم قرّر." : "راجعه، ثم قرّر.";
       safe = "لن يُنشر شيء قبل موافقتك.";
     }
+    if (pendingProposals.length && pendingProposals.every((a) => a.kind.startsWith("device_"))) {
+      how = pendingProposals.length > 1 ? "أزل علامة ما لا تريده، ثم قرّر." : "";
+      safe = "لن يحدث شيء على جهازك قبل موافقتك.";
+    }
     if (pendingProposals.length && pendingProposals.every((a) => a.kind.startsWith("trade_"))) {
       how = pendingProposals.length > 1 ? "أزل علامة ما لا تريده، ثم قرّر." : "راجعه، ثم قرّر.";
       safe = "كلها تجريبية بأموال افتراضية، ولا يُنفَّذ شيء قبل موافقتك.";
@@ -358,6 +367,8 @@ function storeParts(proposals) {
   if (trades) parts.push(trades === 1 ? "صفقة تجريبية واحدة" : trades === 2 ? "صفقتين تجريبيتين" : `${trades} صفقات تجريبية`);
   const alerts = n("trade_alert");
   if (alerts) parts.push(alerts === 1 ? "تنبيه سعر" : alerts === 2 ? "تنبيهَي سعر" : `${alerts} تنبيهات أسعار`);
+  const dev = proposals.filter((a) => a.kind.startsWith("device_"));
+  if (dev.length) parts.push(dev.length === 1 ? (dev[0].payload.title || "إجراءً على الجهاز") : `${dev.length} إجراءات على الجهاز`);
   if (n("trade_cancel_alert")) parts.push(`إلغاء ${n("trade_cancel_alert") === 1 ? "تنبيه" : `${n("trade_cancel_alert")} تنبيهات`}`);
   return parts;
 }
@@ -1193,6 +1204,33 @@ async function checkAlerts() {
   }
 }
 
+async function loadDevice() {
+  try { renderDevice(await api("GET", "/api/device")); } catch (e) { $("#device-info").textContent = e.message; }
+}
+
+function renderDevice(data) {
+  const i = data.info;
+  const gb = (x) => (x === null || x === undefined ? "—" : `${Number(x).toFixed(1)} GB`);
+  let info = "";
+  if (i) {
+    info = `الذاكرة <bdi dir="ltr">${gb(i.memory_free_gb)}</bdi> متاحة من <bdi dir="ltr">${gb(i.memory_gb)}</bdi>`;
+    for (const d of i.drives || []) info += ` · القرص <bdi dir="ltr">${esc(d.drive)}</bdi> فيه <bdi dir="ltr">${Math.round(d.free_gb)} GB</bdi> فارغة`;
+    if (i.battery) info += ` · البطارية ${i.battery.percent}%${i.battery.charging ? " (تشحن)" : ""}`;
+  }
+  if (data.backend !== "windows") info += `${info ? "<br>" : ""}<span class="muted">التحكم بالصوت والقفل والإغلاق يعمل على ويندوز.</span>`;
+  $("#device-info").innerHTML = info;
+  const ul = $("#device-apps");
+  ul.replaceChildren();
+  for (const a of data.apps) {
+    const li = document.createElement("li");
+    li.className = "chip";
+    li.innerHTML = `<span dir="auto">${esc(a.label)}</span>`
+      + (a.custom ? ` <button type="button" class="link" data-app-del="${esc(a.name)}" aria-label="أزل ${esc(a.label)}">×</button>` : "");
+    li.title = a.target;
+    ul.appendChild(li);
+  }
+}
+
 const IMAGE_PROVIDER = { openai: "OpenAI", gemini: "Gemini" };
 
 function renderImages() {
@@ -1360,6 +1398,7 @@ async function openDrawer() {
     renderImages();
     await loadMedia();
     await loadTrading();
+    await loadDevice();
     renderAgents();
     renderStoreForm();
     $("#ws-status").textContent = "";
@@ -1501,6 +1540,26 @@ document.addEventListener("DOMContentLoaded", async () => {
     } finally {
       btn.disabled = false;
     }
+  });
+  $("#btn-add-app").addEventListener("click", async () => {
+    const line = $("#device-status");
+    line.classList.remove("is-error");
+    try {
+      const data = await api("POST", "/api/device/apps", {
+        name: $("#app-name").value, label: $("#app-label").value, target: $("#app-target").value,
+      });
+      renderDevice(data);
+      ["#app-name", "#app-label", "#app-target"].forEach((id) => { $(id).value = ""; });
+      line.textContent = "أُضيف البرنامج إلى القائمة المسموحة.";
+    } catch (err) {
+      line.textContent = err.message;
+      line.classList.add("is-error");
+    }
+  });
+  $("#device-apps").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-app-del]");
+    if (!btn) return;
+    try { renderDevice(await api("DELETE", `/api/device/apps/${btn.dataset.appDel}`)); } catch (err) { showHint(err.message, true); }
   });
   $("#alert-bar").addEventListener("click", async (e) => {
     if (!e.target.closest("#btn-alerts-seen")) return;

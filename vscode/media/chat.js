@@ -24,6 +24,10 @@
     propose_budget: "ميزانية مقترحة", generate_image: "صورة جديدة",
     price: "السعر", analyze: "تحليل الشارت", compare: "مقارنة", portfolio: "المحفظة التجريبية", list_alerts: "التنبيهات",
     propose_trade: "صفقة تجريبية مقترحة", propose_alert: "تنبيه مقترح", propose_cancel_alert: "إلغاء تنبيه مقترح",
+    system_info: "معلومات الجهاز", running_apps: "البرامج المفتوحة", list_apps: "البرامج المسموحة",
+    propose_open_app: "فتح برنامج", propose_open_url: "فتح رابط", propose_open_folder: "فتح مجلد",
+    propose_open_file: "فتح ملف", propose_volume: "الصوت", propose_media: "الوسائط", propose_close_app: "إغلاق برنامج",
+    propose_lock: "قفل الشاشة",
   };
   const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
   const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
@@ -32,6 +36,8 @@
     store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
     social_cancel: "إلغاء منشور مجدول", ads_pause: "إيقاف إعلان", ads_resume: "تشغيل إعلان", ads_budget: "ميزانية إعلان",
     trade_buy: "شراء تجريبي", trade_sell: "بيع تجريبي", trade_alert: "تنبيه سعر", trade_cancel_alert: "إلغاء تنبيه",
+    device_open_app: "فتح برنامج", device_open_url: "فتح رابط", device_open_folder: "فتح مجلد", device_open_file: "فتح ملف",
+    device_volume: "الصوت", device_media: "الوسائط", device_close_app: "إغلاق برنامج", device_lock: "قفل الشاشة",
   };
   const TASK_STATE = {
     planning: "يخطّط…", running: "يعمل…", waiting: "ينتظر موافقتك", failed: "تعثّرت المهمة",
@@ -260,7 +266,7 @@
       const storeN = pendingStore.length - posts - adsN - otherN - tradeN;
       if (tradeN) parts.push(`${parts.length ? "و" : ""}${tradeN === 1 ? "إجراءً تجريبيًا واحدًا" : `${tradeN} إجراءات تجريبية`} (أموال افتراضية)`);
       if (adsN) parts.push(`${parts.length ? "و" : ""}${adsN === 1 ? "تغييرًا واحدًا" : `${adsN} تغييرات`} في الإعلانات`);
-      if (otherN) parts.push(`${parts.length ? "و" : ""}${otherN === 1 ? "إجراءً واحدًا" : `${otherN} إجراءات`}`);
+      if (otherN) parts.push(`${parts.length ? "و" : ""}${otherN === 1 ? "إجراءً واحدًا على الجهاز" : `${otherN} إجراءات على الجهاز`}`);
       if (storeN) {
         const count = storeN === 1 ? "تغييرًا واحدًا" : storeN === 2 ? "تغييرين" : storeN <= 10 ? `${storeN} تغييرات` : `${storeN} تغييرًا`;
         parts.push(`${parts.length ? "و" : ""}${count} على المتجر`);

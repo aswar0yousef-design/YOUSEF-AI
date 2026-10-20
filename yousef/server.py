@@ -303,6 +303,9 @@ class Api:
             ("POST", r"/api/social/(\d{1,30})/test", self.test_social),
             ("GET", r"/api/social/(\d{1,30})/posts", self.social_posts),
             ("DELETE", r"/api/social/(\d{1,30})", self.remove_social),
+            ("GET", r"/api/device", self.device),
+            ("POST", r"/api/device/apps", self.device_add_app),
+            ("DELETE", r"/api/device/apps/([a-z0-9][a-z0-9_\-]{0,39})", self.device_remove_app),
             ("GET", r"/api/trading", self.trading),
             ("POST", r"/api/trading/reset", self.trading_reset),
             ("GET", r"/api/trading/alerts", self.trading_alerts),
@@ -583,6 +586,35 @@ class Api:
         except (ProviderError, KeyStoreError, SettingsError) as e:
             raise ApiError(400, str(e)) from None
         return 201, {"added": added, "accounts": self.app.social.public(), "ads": self.app.ads.public()}
+
+    # ---- device control --------------------------------------------------------
+    def device(self, query, body):
+        try:
+            info = self.app.device.info()
+        except Exception as e:  # information only; the panel still lists the apps
+            log.warning("system info failed: %s", e)
+            info = None
+        custom = {a["name"] for a in self.app.settings.get()["device"]["apps"]}
+        apps = [dict(a, custom=a["name"] in custom) for a in self.app.device.apps()]
+        return 200, {"info": info, "apps": apps, "backend": self.app.device.backend.name}
+
+    def device_add_app(self, query, body):
+        current = self.app.settings.get()["device"]["apps"]
+        name = str(body.get("name") or "").strip().lower()
+        entry = {"name": name, "label": str(body.get("label") or "").strip() or name,
+                 "target": str(body.get("target") or "").strip().strip('"')}
+        try:
+            self.app.settings.update({"device": {"apps": [a for a in current if a["name"] != name] + [entry]}})
+        except SettingsError as e:
+            raise ApiError(400, str(e)) from None
+        return self.device({}, {})
+
+    def device_remove_app(self, name, query, body):
+        current = self.app.settings.get()["device"]["apps"]
+        if not any(a["name"] == name for a in current):
+            raise ApiError(404, "هذا البرنامج من القائمة الأساسية أو غير موجود")
+        self.app.settings.update({"device": {"apps": [a for a in current if a["name"] != name]}})
+        return self.device({}, {})
 
     # ---- paper trading ---------------------------------------------------------
     def trading(self, query, body):

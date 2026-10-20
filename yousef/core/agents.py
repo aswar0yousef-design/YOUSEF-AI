@@ -42,6 +42,10 @@ TRADE_TOOLS = ("For this step you can read live market prices and indicators, an
                "and alerts, and propose paper trades and alerts through the tools described below; they use practice "
                "money and happen only after the user approves. You cannot place real orders, connect to exchanges or "
                "brokers, move money, publish, or control the computer.")
+DEVICE_TOOLS = ("For this step you can read this PC's state and propose safe actions on it (open allowed programs, web "
+                "pages, folders and documents; volume and media keys; close an allowed program; lock the screen) through "
+                "the tools described below; each runs only after the user approves. You cannot run commands, delete or "
+                "move files, install software, shut down, publish, or trade.")
 TECH_TOOLS = ("For this step you can check the user's own connected stores, their live sites and the attached project "
               "folder, and propose fixes through the tools described below. You still cannot publish posts, send "
               "messages, buy, trade, delete products, check sites that are not the user's, or control the computer.")
@@ -181,8 +185,15 @@ AGENTS: dict[str, Agent] = {
             "before reward. Paper trading is practice; real trades are the user's own decision.",
             phase=7,
         ),
-        Agent("device_control", "التحكم بالجهاز", "Controls apps and files on this PC.",
-              "chat", available=False, phase=7),
+        Agent(
+            "device_control", "التحكم بالجهاز",
+            "Controls this Windows PC safely after approval: opens allowed programs, web pages, folders and documents, "
+            "changes the volume, play/pause media, closes an allowed program, locks the screen; answers questions "
+            "about the PC (memory, disks, battery, running programs).",
+            "chat",
+            "Device control. Do exactly the requested action on the PC with the safe tools, and nothing more.",
+            phase=7,
+        ),
     ]
 }
 

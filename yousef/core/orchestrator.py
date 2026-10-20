@@ -36,7 +36,9 @@ from ..integrations.vercel import API as VERCEL_API
 from ..models.base import ProviderError
 from ..workspace import Services, Workspace, WorkspaceError, git, registry
 from ..integrations.trade_tools import execute as execute_trade
-from .agents import AGENTS, IMAGE_TOOLS as IMAGE_ABILITIES, TRADE_TOOLS as TRADE_ABILITIES, available_agents, get_agent
+from .agents import (AGENTS, DEVICE_TOOLS as DEVICE_ABILITIES, IMAGE_TOOLS as IMAGE_ABILITIES,
+                     TRADE_TOOLS as TRADE_ABILITIES, available_agents, get_agent)
+from .device_control import build_toolbox as build_device_toolbox, run_device_control
 from .coder import run_coder
 from .store_manager import run_store_manager
 from .ads_manager import build_toolbox as build_ads_toolbox, run_ads_manager
@@ -87,6 +89,12 @@ TRADING_NOTE = """The "trading_analyst" agent reads live prices (crypto{stocks})
 TRADE_HINT = re.compile(r"بيتكوين|بتكوين|إيثريوم|ايثريوم|ايثيريوم|كريبتو|عملة رقمية|عملات رقمية|العملات الرقمية|سهم|أسهم|اسهم|"
                         r"البورصة|بورصة|تداول|شارت|الذهب|فوركس|محفظة تجريبية|المحفظة التجريبية|تنبيه سعر|"
                         r"\b(?:btc|eth|sol|xrp|bnb|doge|usdt|rsi|macd|crypto|bitcoin|stocks?|forex|trading|nasdaq)\b", re.I)
+
+DEVICE_NOTE = """The "device_control" agent acts on this Windows PC after the user approves: opens allowed programs, web pages, folders and documents, changes the volume, controls media, closes an allowed program, locks the screen, and reads the PC's state (memory, disks, battery, running programs). Give any step that acts on the PC or asks about it to "device_control", in ONE step."""
+
+DEVICE_HINT = re.compile(r"افتح|اغلق|أغلق|سكّر|سكر|شغّل|شغل|الصوت|ارفع|اخفض|اخفض|خفّض|كتم|اقفل|أقفل|قفل الشاشة|"
+                         r"المجلد|مجلد|التنزيلات|سطح المكتب|البطارية|الذاكرة|الرام|القرص|المساحة|"
+                         r"\b(?:open|close|launch|volume|mute|lock|battery|disk|ram)\b", re.I)
 
 ADS_HINT = re.compile(r"إعلان|اعلان|حمل[ةه]|حملات|ميزاني|campaign|ads?\b|roas|إنفاق|انفاق", re.I)
 
@@ -167,7 +175,7 @@ def _lessons_text(lessons: list[dict]) -> tuple[list[str], str]:
 
 class Orchestrator:
     def __init__(self, memory: Memory, router: Router, settings, keystore=None, stores=None, social=None,
-                 media=None, publisher=None, ads=None, images=None, market=None, paper=None):
+                 media=None, publisher=None, ads=None, images=None, market=None, paper=None, device=None):
         self.memory = memory
         self.router = router
         self.settings = settings
@@ -180,6 +188,7 @@ class Orchestrator:
         self.images = images        # integrations.images.ImageMaker
         self.market = market        # trading.market.Market
         self.paper = paper          # trading.paper.PaperBook
+        self.device = device        # device.Device
         self.github_api = GITHUB_API
         self.vercel_api = VERCEL_API
         self.site_auditor = None  # audit.SiteAuditor; None = live checks over the network
@@ -329,7 +338,8 @@ class Orchestrator:
             ads_step = agent.key == "ads_manager"
             design_step = agent.key == "designer"
             trade_step = agent.key == "trading_analyst" and self.market is not None
-            tool_step = store_step or tech_step or social_step or ads_step or design_step or trade_step
+            device_step = agent.key == "device_control" and self.device is not None
+            tool_step = store_step or tech_step or social_step or ads_step or design_step or trade_step or device_step
             # tool agents propose their actions; the approval comes after they work, on the real proposals
             if step["needs_confirmation"] and not (coder_in_project or tool_step):
                 approved = self._wait_for_approval(task_id, step_id)
@@ -358,6 +368,9 @@ class Orchestrator:
                 if ads_step:
                     outcome = self._run_ads_step(task_id, step_id, agent, step, request, history, results,
                                                  lessons, speak, job.store)
+                elif device_step:
+                    outcome = self._run_device_step(task_id, step_id, agent, step, request, history, results,
+                                                    lessons, speak)
                 elif trade_step:
                     outcome = self._run_trade_step(task_id, step_id, agent, step, request, history, results,
                                                    lessons, speak)
@@ -429,6 +442,8 @@ class Orchestrator:
             obvious = False  # "كيف حملاتي؟" belongs to the ads manager
         if obvious and ws is None and self.market is not None and TRADE_HINT.search(request):
             obvious = False  # "حلل البيتكوين" belongs to the trading analyst
+        if obvious and ws is None and self.device is not None and DEVICE_HINT.search(request):
+            obvious = False  # "افتح كروم" belongs to device control
         if len(request) <= SHORT_REQUEST and "\n" not in request and obvious:
             return [{"agent": default, "instruction": request,
                      "needs_confirmation": requires_approval(request, False)}]
@@ -456,6 +471,8 @@ class Orchestrator:
         if "ads" in connected:
             accounts = ", ".join(f'"{e["name"]}" ({e["currency"]})' for e in self.ads.entries())
             system += "\n\n" + ADS_NOTE.format(accounts=accounts)
+        if self.device is not None:
+            system += "\n\n" + DEVICE_NOTE
         if self.market is not None:
             system += "\n\n" + TRADING_NOTE.format(
                 stocks="; US stocks, forex and gold too" if self.market.stocks_ready
@@ -566,6 +583,19 @@ class Orchestrator:
             self._fail_step(task_id, step_id, e)
             return None
         return self._finish_tool_step(task_id, step_id, res, [], [])
+
+    def _run_device_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                         history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                         speak: bool) -> str | None:
+        """Reads the PC's state, then approval of any action on it."""
+        system = self._system(agent, lessons, speak, abilities=DEVICE_ABILITIES)
+        toolbox = build_device_toolbox(self.device)
+        try:
+            res = run_device_control(self.router, toolbox, system, self._step_parts(step, request, history, results))
+        except NoModelError as e:
+            self._fail_step(task_id, step_id, e)
+            return None
+        return self._finish_tool_step(task_id, step_id, res, [], toolbox.action_list())
 
     def _run_trade_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
                         history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
@@ -752,7 +782,20 @@ class Orchestrator:
         return "**التداول التجريبي:**\n" + "\n".join(lines)
 
     def _run_device_actions(self, task_id: int, actions: list[dict]) -> str:
-        return self._unsupported("الجهاز", actions)
+        """Each approved action on this PC runs on its own, after checking it again."""
+        if self.device is None:
+            return self._unsupported("الجهاز", actions)
+        lines = []
+        for action in actions:
+            title = action["payload"].get("title") or action["kind"]
+            try:
+                note = self.device.execute(action["kind"], action["payload"])
+                self.memory.update_action(action["id"], "done", note)
+                lines.append(f"- {note}")
+            except (ValueError, OSError, KeyError) as e:
+                self.memory.update_action(action["id"], "failed", str(e)[:500])
+                lines.append(f"- تعذّر «{title}»: {e}")
+        return "**الجهاز:**\n" + "\n".join(lines)
 
     def _unsupported(self, label: str, actions: list[dict]) -> str:
         for action in actions:

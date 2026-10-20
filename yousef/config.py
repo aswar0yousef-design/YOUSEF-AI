@@ -56,6 +56,8 @@ DEFAULT_SETTINGS: dict = {
     "images": {"provider": "auto", "openai_model": "", "gemini_model": ""},
     # paper trading: fee per trade in percent, and the position size above which the analyst warns
     "trading": {"fee_pct": 0.1, "max_position_pct": 25},
+    # device control: programs the user added to the allowed list (Yousef has its own defaults)
+    "device": {"apps": []},
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "large-v3-turbo",  # small and below misunderstand Arabic too often
@@ -136,6 +138,7 @@ def _validate(merged: dict) -> dict:
     s["ads"] = _validate_ads(s.get("ads"))
     s["images"] = _validate_images(s.get("images"))
     s["trading"] = _validate_trading(s.get("trading"))
+    s["device"] = _validate_device(s.get("device"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
 
 
@@ -193,6 +196,25 @@ def _validate_images(value) -> dict:
         if len(v[k]) > 80 or any(c.isspace() for c in v[k]):
             raise SettingsError(f"images.{k} must be a model id")
     return v
+
+
+def _validate_device(value) -> dict:
+    from .device.control import DeviceError, check_app  # the device rules live with the device code
+    if not isinstance(value, dict) or not isinstance(value.get("apps", []), list):
+        raise SettingsError("device.apps must be a list")
+    apps, names = [], set()
+    for item in value.get("apps", [])[:40]:
+        if not isinstance(item, dict):
+            raise SettingsError("each app needs a name and a target")
+        try:
+            app = check_app(item)
+        except DeviceError as e:
+            raise SettingsError(str(e)) from None
+        if app["name"] in names:
+            raise SettingsError(f"app name used twice: {app['name']}")
+        names.add(app["name"])
+        apps.append(app)
+    return {"apps": apps}
 
 
 def _validate_trading(value) -> dict:
