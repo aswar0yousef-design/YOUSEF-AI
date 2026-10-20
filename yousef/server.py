@@ -293,6 +293,9 @@ class Api:
             ("GET", r"/api/media", self.list_media),
             ("POST", r"/api/media", self.upload_media),
             ("DELETE", r"/api/media/(img-[0-9a-f]{16}\.(?:jpg|png))", self.delete_media),
+            ("GET", r"/api/ads", self.list_ads),
+            ("POST", r"/api/ads", self.connect_ads),
+            ("DELETE", r"/api/ads/(act_\d{1,30})", self.remove_ads),
             ("GET", r"/api/social", self.list_social),
             ("POST", r"/api/social", self.connect_social),
             ("POST", r"/api/social/(\d{1,30})/test", self.test_social),
@@ -568,10 +571,28 @@ class Api:
         if not token:
             raise ApiError(400, "الصق رمز Meta أولًا")
         try:
-            added = self.app.social.connect(token)
+            added = self.app.social.connect(token, ads=self.app.ads)
         except (ProviderError, KeyStoreError, SettingsError) as e:
             raise ApiError(400, str(e)) from None
-        return 201, {"added": added, "accounts": self.app.social.public()}
+        return 201, {"added": added, "accounts": self.app.social.public(), "ads": self.app.ads.public()}
+
+    def list_ads(self, query, body):
+        return 200, {"ads": self.app.ads.public()}
+
+    def connect_ads(self, query, body):
+        token = str(body.get("token", "")).strip()
+        if not token:
+            raise ApiError(400, "الصق رمز Meta أولًا")
+        try:
+            self.app.ads.connect(token)
+        except (ProviderError, KeyStoreError, SettingsError) as e:
+            raise ApiError(400, str(e)) from None
+        return 201, {"ads": self.app.ads.public()}
+
+    def remove_ads(self, account_id, query, body):
+        if not self.app.ads.remove(account_id):
+            raise ApiError(404, "ad account not found")
+        return 200, {"ads": self.app.ads.public()}
 
     def test_social(self, page_id, query, body):
         try:

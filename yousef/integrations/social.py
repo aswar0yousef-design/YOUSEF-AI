@@ -17,6 +17,7 @@ def secret_name(page_id: str) -> str:
 
 class SocialAccounts:
     def __init__(self, settings, keystore, api: str = GRAPH, version: str = VERSION, sleep=None):
+        self.last_ads: list[dict] = []
         self.settings = settings
         self.keystore = keystore
         self.api = api
@@ -51,9 +52,15 @@ class SocialAccounts:
         extra = {"sleep": self.sleep} if self.sleep else {}
         return Page(entry, token, self.api, self.version, **extra)
 
-    def connect(self, token: str) -> list[dict]:
-        """Find the Pages this token manages, test each, and save them (existing ones are refreshed)."""
+    def connect(self, token: str, ads=None) -> list[dict]:
+        """Find the Pages this token manages, test each, and save them (existing ones are refreshed).
+        With `ads` (AdAccounts), a user token that can also read ad accounts connects those too."""
         pages = connect(token, self.api, self.version)[:20]
+        if ads is not None and not any(p["token"] == token for p in pages):  # a user token, not a Page token
+            try:
+                self.last_ads = ads.connect(token)
+            except MetaError:
+                self.last_ads = []  # no ads permissions on this token: ads stay optional
         current = {e["id"]: e for e in self.entries()}
         for p in pages:
             self.keystore.set(secret_name(p["id"]), p["token"])

@@ -147,7 +147,7 @@ class KeyStore:
     @staticmethod
     def _check_provider(provider: str) -> None:
         if provider not in KEY_NAMES and not STORE_KEY.fullmatch(provider or "") \
-                and not SOCIAL_KEY.fullmatch(provider or ""):
+                and not SOCIAL_KEY.fullmatch(provider or "") and provider != "meta_ads":
             raise KeyStoreError(f"unknown provider: {provider}")
 
     def set(self, provider: str, key: str) -> None:

@@ -39,6 +39,27 @@ class FakeMeta:
         self.quota_used = 3
         self.slow_containers = 0  # how many status checks return IN_PROGRESS before FINISHED
         self.next = 1000
+        # ads: one account in USD with two campaigns (the second budgets on its ad set)
+        self.ad_accounts = {"act_501": {"name": "إعلانات بيت العود", "currency": "USD", "account_status": 1}}
+        self.campaigns = {
+            "601": {"account": "act_501", "name": "عرض الخريف", "status": "ACTIVE", "objective": "OUTCOME_SALES",
+                    "daily_budget": "2000", "lifetime_budget": None},
+            "602": {"account": "act_501", "name": "زيارات المتجر", "status": "ACTIVE", "objective": "OUTCOME_TRAFFIC",
+                    "daily_budget": None, "lifetime_budget": None},
+        }
+        self.adsets = {"701": {"campaign": "602", "name": "مسقط 25-45", "status": "ACTIVE", "daily_budget": "1500",
+                               "lifetime_budget": None}}
+        self.insights = {
+            "601": {"spend": "140.00", "impressions": "52000", "reach": "30000", "clicks": "1300", "ctr": "2.5",
+                    "cpc": "0.108", "cpm": "2.69", "actions": [{"action_type": "omni_purchase", "value": "28"},
+                                                               {"action_type": "purchase", "value": "28"}],
+                    "action_values": [{"action_type": "omni_purchase", "value": "616.00"}],
+                    "purchase_roas": [{"action_type": "omni_purchase", "value": "4.4"}]},
+            "602": {"spend": "105.00", "impressions": "61000", "reach": "41000", "clicks": "600", "ctr": "0.98",
+                    "cpc": "0.175", "cpm": "1.72", "actions": [{"action_type": "link_click", "value": "600"}]},
+            "701": {"spend": "105.00", "impressions": "61000", "clicks": "600", "ctr": "0.98", "cpc": "0.175"},
+        }
+        self.ad_updates = []
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -91,6 +112,41 @@ class FakeMeta:
     def _err(message, code=100, status=400):
         return status, {"error": {"message": message, "type": "OAuthException", "code": code}}
 
+    def _ads(self, method, parts, q, body):
+        node = parts[0]
+        if node in self.ad_accounts and parts[1:] == ["campaigns"]:
+            rows = [dict({"id": k, "effective_status": v["status"]}, **{f: v[f] for f in ("name", "status", "objective",
+                     "daily_budget", "lifetime_budget")}) for k, v in self.campaigns.items() if v["account"] == node]
+            return 200, {"data": rows}
+        if node in self.ad_accounts and parts[1:] == ["insights"]:
+            rows = [dict(self.insights[k], campaign_id=k, campaign_name=v["name"]) for k, v in self.campaigns.items()
+                    if v["account"] == node]
+            return 200, {"data": rows}
+        if node in self.campaigns and parts[1:] == ["adsets"]:
+            return 200, {"data": [dict({"id": k, "campaign_id": node, "effective_status": v["status"]},
+                                       **{f: v[f] for f in ("name", "status", "daily_budget", "lifetime_budget")})
+                                  for k, v in self.adsets.items() if v["campaign"] == node]}
+        if parts[1:] == ["insights"]:
+            if q.get("time_increment") == "1":
+                return 200, {"data": [dict(self.insights[node], date_start=f"2026-10-{d:02d}") for d in (17, 18, 19)]}
+            if q.get("level") == "adset":
+                return 200, {"data": [dict(self.insights[k], adset_id=k, adset_name=v["name"])
+                                      for k, v in self.adsets.items() if v["campaign"] == node]}
+        obj = self.campaigns.get(node) or self.adsets.get(node)
+        if obj is not None and len(parts) == 1:
+            if method == "POST":
+                self.ad_updates.append((node, body))
+                if "status" in body:
+                    obj["status"] = body["status"]
+                if "daily_budget" in body:
+                    if obj["daily_budget"] is None:
+                        return self._err("(#100) daily_budget is set at the ad set level")
+                    obj["daily_budget"] = str(body["daily_budget"])
+                return 200, {"success": True}
+            return 200, {"id": node, "name": obj["name"], "status": obj["status"], "daily_budget": obj["daily_budget"],
+                         "lifetime_budget": obj["lifetime_budget"]}
+        return self._err("unsupported ads request")
+
     def _page_for(self, token):
         return next((p for p, t in PAGE_TOKENS.items() if t == token), None)
 
@@ -104,6 +160,16 @@ class FakeMeta:
         if token != USER_TOKEN and token_page is None:
             return self._err("Error validating access token: Session has expired", code=190)
 
+        if parts == ["me", "adaccounts"]:
+            if token != USER_TOKEN:
+                return self._err("(#100) Tried accessing nonexisting field (adaccounts) on node type (Page)")
+            return 200, {"data": [{"id": k, "account_id": k[4:], "name": v["name"], "currency": v["currency"],
+                                   "account_status": v["account_status"]} for k, v in self.ad_accounts.items()]}
+        ad_node = parts[0] in self.ad_accounts or parts[0] in self.campaigns or parts[0] in self.adsets
+        if ad_node:
+            if token != USER_TOKEN:
+                return self._err("(#200) Requires ads_read permission", code=200)
+            return self._ads(method, parts, q, body)
         if parts == ["me", "accounts"]:
             if token_page:
                 return self._err("(#100) Tried accessing nonexisting field (accounts) on node type (Page)")

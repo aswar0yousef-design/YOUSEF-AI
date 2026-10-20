@@ -31,6 +31,10 @@ SOCIAL_TOOLS = ("For this step you can read the user's connected Facebook Pages 
                 "pictures and their stores' products, and propose posts through the tools described below; posts are "
                 "published only after the user approves. You still cannot change products or orders, send messages, "
                 "buy, trade, or control the computer.")
+ADS_TOOLS = ("For this step you can read the user's Meta ad accounts (campaigns, ad sets, results) and their stores' "
+             "sales, and propose pausing, resuming or rebudgeting through the tools described below; changes happen "
+             "only after the user approves. You still cannot create campaigns or ads, publish posts, send messages, "
+             "buy, trade, or control the computer.")
 TECH_TOOLS = ("For this step you can check the user's own connected stores, their live sites and the attached project "
               "folder, and propose fixes through the tools described below. You still cannot publish posts, send "
               "messages, buy, trade, delete products, check sites that are not the user's, or control the computer.")
@@ -47,8 +51,13 @@ class Agent:
     phase: int = 1
 
     def system_prompt(self, rules: list[str], project: str | None = None, stores: bool = False,
-                      tech: bool = False, social: bool = False) -> str:
-        if social:
+                      tech: bool = False, social: bool = False, ads: bool = False,
+                      abilities: str | None = None) -> str:
+        if abilities:
+            pass
+        elif ads:
+            abilities = ADS_TOOLS
+        elif social:
             abilities = SOCIAL_TOOLS
         elif tech:
             abilities = TECH_TOOLS
@@ -134,8 +143,17 @@ AGENTS: dict[str, Agent] = {
             "store or the user, never invent them.",
             phase=6,
         ),
-        Agent("ads_manager", "مدير الإعلانات", "Plans and manages ad campaigns.",
-              "analysis", available=False, phase=6),
+        Agent(
+            "ads_manager", "مدير الإعلانات",
+            "Reads the user's connected Meta (Facebook and Instagram) ad accounts: campaigns, ad sets, spend and "
+            "results (ROAS, cost per purchase, CTR), compares them with store sales, and proposes pausing, resuming "
+            "or changing daily budgets for approval.",
+            "analysis",
+            "Ads manager. Judge campaigns by the numbers the tools return and by their objective, say when data is "
+            "too thin to judge, and give a clear reason for every proposed change. Money matters: be careful with "
+            "budget increases.",
+            phase=6,
+        ),
         Agent("trading_analyst", "محلل التداول", "Market analysis, alerts and paper trading.",
               "analysis", available=False, phase=7),
         Agent("device_control", "التحكم بالجهاز", "Controls apps and files on this PC.",
@@ -145,9 +163,11 @@ AGENTS: dict[str, Agent] = {
 
 
 # agents that also need something connected before the planner may use them (any one of these)
-NEEDS = {"store_manager": ("stores",), "tech_manager": ("stores", "workspace"), "social_publisher": ("social",)}
+NEEDS = {"store_manager": ("stores",), "tech_manager": ("stores", "workspace"), "social_publisher": ("social",),
+         "ads_manager": ("ads",)}
 # what an agent becomes when what it needs is missing: advice instead of tools
-FALLBACK = {"store_manager": "analyst", "tech_manager": "coder", "social_publisher": "writer"}
+FALLBACK = {"store_manager": "analyst", "tech_manager": "coder", "social_publisher": "writer",
+            "ads_manager": "analyst"}
 
 
 def _usable(agent: Agent, connected) -> bool:

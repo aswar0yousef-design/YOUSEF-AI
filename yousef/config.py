@@ -50,6 +50,8 @@ DEFAULT_SETTINGS: dict = {
     "stores": [],
     # Facebook Pages (with their Instagram accounts): [{"id", "name", "ig_id", "ig_username"}]; tokens live in keys.dat
     "social": [],
+    # Meta ad accounts: [{"id": "act_..", "name", "currency", "status"}]; the token lives in keys.dat
+    "ads": [],
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "large-v3-turbo",  # small and below misunderstand Arabic too often
@@ -127,6 +129,7 @@ def _validate(merged: dict) -> dict:
     s["workspaces"] = _validate_workspaces(s.get("workspaces"))
     s["stores"] = _validate_stores(s.get("stores"))
     s["social"] = _validate_social(s.get("social"))
+    s["ads"] = _validate_ads(s.get("ads"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
 
 
@@ -170,6 +173,25 @@ def _validate_social(items) -> list:
             raise SettingsError("invalid social account entry")
         ids.add(pid)
         out.append({"id": pid, "name": name, "ig_id": ig_id, "ig_username": ig_user})
+    return out
+
+
+def _validate_ads(items) -> list:
+    if not isinstance(items, list) or len(items) > 20:
+        raise SettingsError("ads must be a list of at most 20 ad accounts")
+    out, ids = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise SettingsError("each ad account needs an id")
+        aid = str(item.get("id") or "")
+        name = str(item.get("name") or "").strip()[:100] or aid
+        currency = str(item.get("currency") or "USD").upper()
+        status = str(item.get("status") or "")[:30]
+        if (not aid.startswith("act_") or not aid[4:].isdigit() or len(aid) > 40 or aid in ids
+                or not (len(currency) == 3 and currency.isalpha())):
+            raise SettingsError("invalid ad account entry")
+        ids.add(aid)
+        out.append({"id": aid, "name": name, "currency": currency, "status": status})
     return out
 
 

@@ -6,7 +6,8 @@
 
   const AGENTS = {
     general: "المساعد العام", coder: "المبرمج", writer: "صانع المحتوى", analyst: "المحلل", store_manager: "مدير المتاجر",
-    tech_manager: "المدير التقني", social_publisher: "ناشر السوشيال",
+    tech_manager: "المدير التقني", social_publisher: "ناشر السوشيال", ads_manager: "مدير الإعلانات",
+    trading_analyst: "محلل التداول", device_control: "التحكم بالجهاز",
   };
   const TOOL_LABEL = {
     list_files: "عرض مجلد", read_file: "قراءة", search: "بحث", replace: "تعديل مقترح", write_file: "ملف مقترح",
@@ -18,14 +19,16 @@
     propose_bundle: "باقة مقترحة", site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود",
     check_dependencies: "فحص الحزم", list_accounts: "عرض الحسابات", recent_posts: "آخر المنشورات",
     list_scheduled: "المنشورات المجدولة", list_media: "مكتبة الصور", propose_post: "منشور مقترح",
-    propose_cancel: "إلغاء منشور مقترح",
+    propose_cancel: "إلغاء منشور مقترح", list_ad_accounts: "الحسابات الإعلانية", campaigns: "الحملات",
+    adsets: "المجموعات الإعلانية", daily: "النتائج اليومية", propose_pause: "إيقاف مقترح", propose_resume: "تشغيل مقترح",
+    propose_budget: "ميزانية مقترحة",
   };
   const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
   const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
   const PROPOSAL_KIND = {
     store_create_product: "منتج جديد", store_update_product: "تعديل", store_create_discount: "عرض جديد",
     store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
-    social_cancel: "إلغاء منشور مجدول",
+    social_cancel: "إلغاء منشور مجدول", ads_pause: "إيقاف إعلان", ads_resume: "تشغيل إعلان", ads_budget: "ميزانية إعلان",
   };
   const TASK_STATE = {
     planning: "يخطّط…", running: "يعمل…", waiting: "ينتظر موافقتك", failed: "تعثّرت المهمة",
@@ -198,7 +201,7 @@
   }
 
   function external(a) {
-    return a.kind.startsWith("store_") || a.kind.startsWith("social_");
+    return ["store_", "social_", "ads_", "trade_", "device_"].some((p) => a.kind.startsWith(p));
   }
 
   function actionsHTML(step) {
@@ -243,7 +246,11 @@
       if (pending) parts.push(`تعديل ${countFiles(pending)}`);
       if (pendingActions.length) parts.push(pendingActions.map((a) => ACTION_NAME[a.kind] || a.kind).join(" ثم "));
       const posts = pendingStore.filter((a) => a.kind.startsWith("social_")).length;
-      const storeN = pendingStore.length - posts;
+      const adsN = pendingStore.filter((a) => a.kind.startsWith("ads_")).length;
+      const otherN = pendingStore.filter((a) => a.kind.startsWith("trade_") || a.kind.startsWith("device_")).length;
+      const storeN = pendingStore.length - posts - adsN - otherN;
+      if (adsN) parts.push(`${parts.length ? "و" : ""}${adsN === 1 ? "تغييرًا واحدًا" : `${adsN} تغييرات`} في الإعلانات`);
+      if (otherN) parts.push(`${parts.length ? "و" : ""}${otherN === 1 ? "إجراءً واحدًا" : `${otherN} إجراءات`}`);
       if (storeN) {
         const count = storeN === 1 ? "تغييرًا واحدًا" : storeN === 2 ? "تغييرين" : storeN <= 10 ? `${storeN} تغييرات` : `${storeN} تغييرًا`;
         parts.push(`${parts.length ? "و" : ""}${count} على المتجر`);

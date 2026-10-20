@@ -38,6 +38,7 @@ from ..workspace import Services, Workspace, WorkspaceError, git, registry
 from .agents import AGENTS, available_agents, get_agent
 from .coder import run_coder
 from .store_manager import run_store_manager
+from .ads_manager import build_toolbox as build_ads_toolbox, run_ads_manager
 from .social_publisher import build_toolbox as build_social_toolbox, run_social_publisher
 from .tech_manager import build_toolbox, run_tech_manager
 from .jsonutil import extract_json
@@ -75,6 +76,10 @@ WORKSPACE_NOTE = """The user attached the project folder "{name}". The "coder" a
 TECH_NOTE = """The "tech_manager" agent checks {targets}: security (HTTPS, headers, exposed files, leaked keys, vulnerable code and packages), errors, speed and technical SEO, and proposes fixes for approval. Give checks, security reviews, bug hunting and technical fixes to "tech_manager"{others}."""
 
 SOCIAL_NOTE = """Connected social accounts: {accounts}. The "social_publisher" agent writes posts for them and publishes or schedules them after the user approves, using the user's pictures and store products. Give any step that writes posts to publish on these accounts to "social_publisher", in ONE step; "writer" only drafts text that is not published."""
+
+ADS_NOTE = """Connected Meta ad accounts: {accounts}. The "ads_manager" agent reads their campaigns and results, compares them with store sales, and proposes pausing, resuming or budget changes (the user approves each). Give any step about ads, campaigns, ad spend or ROAS to "ads_manager", in ONE step."""
+
+ADS_HINT = re.compile(r"إعلان|اعلان|حمل[ةه]|حملات|ميزاني|campaign|ads?\b|roas|إنفاق|انفاق", re.I)
 
 # short requests that sound like publishing go through the planner too
 SOCIAL_HINT = re.compile(r"انشر|نشر|منشور|بوست|ستوري|إنستغرام|انستغرام|انستقرام|إنستا|انستا|فيسبوك|فيس بوك|"
@@ -153,7 +158,7 @@ def _lessons_text(lessons: list[dict]) -> tuple[list[str], str]:
 
 class Orchestrator:
     def __init__(self, memory: Memory, router: Router, settings, keystore=None, stores=None, social=None,
-                 media=None, publisher=None):
+                 media=None, publisher=None, ads=None):
         self.memory = memory
         self.router = router
         self.settings = settings
@@ -162,6 +167,7 @@ class Orchestrator:
         self.social = social        # integrations.social.SocialAccounts
         self.media = media          # media.MediaLibrary
         self.publisher = publisher  # integrations.publisher.SocialPublisher
+        self.ads = ads              # integrations.meta_ads.AdAccounts
         self.github_api = GITHUB_API
         self.vercel_api = VERCEL_API
         self.site_auditor = None  # audit.SiteAuditor; None = live checks over the network
@@ -308,8 +314,10 @@ class Orchestrator:
             store_step = agent.key == "store_manager"
             tech_step = agent.key == "tech_manager"
             social_step = agent.key == "social_publisher"
+            ads_step = agent.key == "ads_manager"
+            tool_step = store_step or tech_step or social_step or ads_step
             # tool agents propose their actions; the approval comes after they work, on the real proposals
-            if step["needs_confirmation"] and not (coder_in_project or store_step or tech_step or social_step):
+            if step["needs_confirmation"] and not (coder_in_project or tool_step):
                 approved = self._wait_for_approval(task_id, step_id)
                 self._take_decision(step_id)
                 if approved is None:
@@ -332,8 +340,11 @@ class Orchestrator:
                     return
                 results.append((step, outcome))
                 continue
-            if store_step or tech_step or social_step:
-                if tech_step:
+            if tool_step:
+                if ads_step:
+                    outcome = self._run_ads_step(task_id, step_id, agent, step, request, history, results,
+                                                 lessons, speak, job.store)
+                elif tech_step:
                     outcome = self._run_tech_step(task_id, step_id, agent, step, request, history, results,
                                                   lessons, speak, ws, job.store)
                 elif social_step:
@@ -378,6 +389,8 @@ class Orchestrator:
             found.add("workspace")
         if self.social and self.social.entries():
             found.add("social")
+        if self.ads and self.ads.entries():
+            found.add("ads")
         return frozenset(found)
 
     def _plan(self, request: str, history: list[dict], lessons: list[dict],
@@ -390,6 +403,8 @@ class Orchestrator:
             obvious = False  # "افحص متجري" belongs to the technical manager, which the planner picks
         if obvious and "social" in connected and SOCIAL_HINT.search(request):
             obvious = False  # "انشر عرض العود" belongs to the social publisher
+        if obvious and "ads" in connected and ADS_HINT.search(request):
+            obvious = False  # "كيف حملاتي؟" belongs to the ads manager
         if len(request) <= SHORT_REQUEST and "\n" not in request and obvious:
             return [{"agent": default, "instruction": request,
                      "needs_confirmation": requires_approval(request, False)}]
@@ -414,7 +429,10 @@ class Orchestrator:
             accounts = ", ".join(f'"{e["name"]}"' + (f' (+ Instagram @{e["ig_username"]})' if e.get("ig_id") else "")
                                  for e in self.social.entries())
             system += "\n\n" + SOCIAL_NOTE.format(accounts=accounts)
-        if connected - {"social"}:
+        if "ads" in connected:
+            accounts = ", ".join(f'"{e["name"]}" ({e["currency"]})' for e in self.ads.entries())
+            system += "\n\n" + ADS_NOTE.format(accounts=accounts)
+        if connected - {"social", "ads"}:
             targets = " and ".join(t for t in (("the connected stores and their live sites" if "stores" in connected else ""),
                                                (f'the project folder "{ws.name}"' if ws else "")) if t)
             others = []
@@ -508,6 +526,19 @@ class Orchestrator:
             return None
         return self._finish_tool_step(task_id, step_id, res, [], toolbox.action_list())
 
+    def _run_ads_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                      history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                      speak: bool, store: str | None) -> str | None:
+        """Campaigns read with the ads tools, then approval before any status or budget changes."""
+        system = self._system(agent, lessons, speak, ads=True)
+        toolbox = build_ads_toolbox(self.ads, self.stores, store)
+        try:
+            res = run_ads_manager(self.router, toolbox, system, self._step_parts(step, request, history, results))
+        except NoModelError as e:
+            self._fail_step(task_id, step_id, e)
+            return None
+        return self._finish_tool_step(task_id, step_id, res, [], toolbox.action_list())
+
     def _run_coder_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
                         history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
                         speak: bool, ws: Workspace) -> str | None:
@@ -532,11 +563,36 @@ class Orchestrator:
             self.memory.update_step(step_id, status="done", output=output, finished_at=time.time())
         return output
 
+    # proposals that act outside the PC, by kind prefix: how to report each outcome
+    EXTERNAL = {
+        "store_": ("**تغييرات المتجر:** رفضها المستخدم، ولم يتغيّر شيء.", "**المتجر:** لم تختر أي تغيير.",
+                   "**المتجر:** لم يتغيّر (اخترت تطبيق الملفات فقط)."),
+        "social_": ("**المنشورات:** رفضها المستخدم، ولم يُنشر شيء.", "**المنشورات:** لم تختر أي منشور.",
+                    "**المنشورات:** لم يُنشر شيء (اخترت تطبيق الملفات فقط)."),
+        "ads_": ("**الإعلانات:** رفضها المستخدم، ولم يتغيّر شيء.", "**الإعلانات:** لم تختر أي تغيير.",
+                 "**الإعلانات:** لم تتغيّر (اخترت تطبيق الملفات فقط)."),
+        "trade_": ("**التداول التجريبي:** رفضه المستخدم.", "**التداول التجريبي:** لم تختر أي صفقة.",
+                   "**التداول التجريبي:** لم يُنفَّذ (اخترت تطبيق الملفات فقط)."),
+        "device_": ("**الجهاز:** رفضها المستخدم، ولم يُنفَّذ شيء.", "**الجهاز:** لم تختر أي إجراء.",
+                    "**الجهاز:** لم يُنفَّذ شيء (اخترت تطبيق الملفات فقط)."),
+    }
+
+    @classmethod
+    def _group(cls, kind: str) -> str | None:
+        return next((p for p in cls.EXTERNAL if kind.startswith(p)), None)
+
+    def _runner(self, prefix: str):
+        return {"store_": lambda task_id, acts: self._run_store_actions(acts),
+                "social_": self._run_social_actions,
+                "ads_": self._run_ads_actions,
+                "trade_": self._run_trade_actions,
+                "device_": self._run_device_actions}[prefix]
+
     def _settle(self, task_id: int, step_id: int, output: str, changes: list[dict], actions: list[dict],
                 ws: Workspace | None, services: Services | None) -> str | None:
         """Wait for the user's decision on an agent's proposals, then carry out what was approved:
-        files first, then git (commit, push, pull request), then store changes.
-        Returns the step's output, or None when the task was cancelled."""
+        files first, then git (commit, push, pull request), then each outside action group
+        (store, posts, ads, paper trades, this PC). Returns the step's output, or None when cancelled."""
         if not (changes or actions):
             return output
         self.memory.add_changes(task_id, step_id, changes)
@@ -545,8 +601,7 @@ class Orchestrator:
         scope, excluded = self._take_decision(step_id)
         pending = self.memory.get_changes(step_id, "pending")
         pending_actions = self.memory.get_actions(step_id, "pending")
-        had_store = any(a["kind"].startswith("store_") for a in pending_actions)
-        had_social = any(a["kind"].startswith("social_") for a in pending_actions)
+        groups_had = {self._group(a["kind"]) for a in pending_actions} - {None}
         if approved is None:
             for c in pending:
                 self.memory.update_change(c["id"], "rejected", "أُلغيت المهمة")
@@ -558,33 +613,28 @@ class Orchestrator:
                 self.memory.update_change(c["id"], "rejected")
             for a in pending_actions:
                 self.memory.update_action(a["id"], "rejected")
-            only_store = had_store and not pending and all(a["kind"].startswith("store_") for a in pending_actions)
-            only_social = had_social and not pending and all(a["kind"].startswith("social_") for a in pending_actions)
-            if only_social:
-                return output + "\n\n**المنشورات:** رفضها المستخدم، ولم يُنشر شيء."
-            return output + "\n\n" + ("**تغييرات المتجر:** رفضها المستخدم، ولم يتغيّر شيء." if only_store
-                                      else "**التعديلات:** رفضها المستخدم، ولم يُنفَّذ شيء.")
+            only = [p for p in groups_had if not pending and all(self._group(a["kind"]) == p for a in pending_actions)]
+            return output + "\n\n" + (self.EXTERNAL[only[0]][0] if only else "**التعديلات:** رفضها المستخدم، ولم يُنفَّذ شيء.")
         chosen = []
         for a in pending_actions:
             if a["id"] in excluded:
                 self.memory.update_action(a["id"], "rejected", "استبعدتها من الموافقة")
             else:
                 chosen.append(a)
-        store_actions = [a for a in chosen if a["kind"].startswith("store_")]
-        social_actions = [a for a in chosen if a["kind"].startswith("social_")]
-        git_actions = [a for a in chosen if a not in store_actions and a not in social_actions]
+        git_actions = [a for a in chosen if self._group(a["kind"]) is None]
+        by_group = {p: [a for a in chosen if self._group(a["kind"]) == p] for p in self.EXTERNAL}
         applied, summary = self._apply_changes(ws, pending) if pending and ws else ([], "")
         if summary:
             output += "\n\n" + summary
-        if scope == "files" and (git_actions or store_actions or social_actions):
-            for a in git_actions + store_actions + social_actions:
+        outside = [a for acts in by_group.values() for a in acts]
+        if scope == "files" and (git_actions or outside):
+            for a in git_actions + outside:
                 self.memory.update_action(a["id"], "rejected", "اخترت تطبيق الملفات فقط")
             if git_actions:
                 output += "\n\n**git:** لم يُنفَّذ (اخترت تطبيق الملفات فقط)."
-            if store_actions:
-                output += "\n\n**المتجر:** لم يتغيّر (اخترت تطبيق الملفات فقط)."
-            if social_actions:
-                output += "\n\n**المنشورات:** لم يُنشر شيء (اخترت تطبيق الملفات فقط)."
+            for p, acts in by_group.items():
+                if acts:
+                    output += "\n\n" + self.EXTERNAL[p][2]
             return output
         if git_actions:
             if pending and not applied:
@@ -593,15 +643,58 @@ class Orchestrator:
                 output += "\n\n**git:** لم يُنفَّذ لأن الملفات لم تُكتب."
             else:
                 output += "\n\n" + self._run_actions(ws, services, git_actions, applied)
-        if store_actions:
-            output += "\n\n" + self._run_store_actions(store_actions)
-        elif had_store and not pending:
-            output += "\n\n**المتجر:** لم تختر أي تغيير."
-        if social_actions:
-            output += "\n\n" + self._run_social_actions(task_id, social_actions)
-        elif had_social and not pending:
-            output += "\n\n**المنشورات:** لم تختر أي منشور."
+        for p, acts in by_group.items():
+            if acts:
+                output += "\n\n" + self._runner(p)(task_id, acts)
+            elif p in groups_had and not pending:
+                output += "\n\n" + self.EXTERNAL[p][1]
         return output
+
+    def _run_ads_actions(self, task_id: int, actions: list[dict]) -> str:
+        """Each approved change runs on its own, after checking nothing changed in Ads Manager since."""
+        lines = []
+        for action in actions:
+            p = action["payload"]
+            label = p.get("title") or p.get("object_id") or "?"
+            try:
+                entry = self.ads.find(p["account_id"])
+                if entry is None:
+                    raise ProviderError("الحساب الإعلاني لم يعد مربوطًا")
+                account = self.ads.account(entry)
+                now = account.current(p["object_id"])
+                before = p.get("before") or {}
+                moved = [k for k in ("status", "daily_budget") if before.get(k) != now.get(k)]
+                if moved:
+                    note = "تغيّر في مدير الإعلانات بعد الاقتراح: " + "، ".join(moved)
+                    self.memory.update_action(action["id"], "conflict", note)
+                    lines.append(f"- لم يُغيَّر «{label}»: {note}")
+                    continue
+                spec = p["spec"]
+                if action["kind"] in ("ads_pause", "ads_resume"):
+                    account.set_status(p["object_id"], spec["status"])
+                    done = "أُوقفت" if spec["status"] == "PAUSED" else "شُغّلت"
+                elif action["kind"] == "ads_budget":
+                    account.set_daily_budget(p["object_id"], spec["daily_budget"])
+                    done = f"صارت ميزانيتها اليومية {spec['daily_budget']:g} {p.get('currency', '')}".strip()
+                else:
+                    raise ProviderError(f"إجراء غير معروف: {action['kind']}")
+                self.memory.update_action(action["id"], "done", done)
+                lines.append(f"- «{label}»: {done}")
+            except (ProviderError, ValueError, KeyError) as e:
+                self.memory.update_action(action["id"], "failed", str(e)[:500])
+                lines.append(f"- تعذّر تنفيذ «{label}»: {e}")
+        return "**الإعلانات:**\n" + "\n".join(lines)
+
+    def _run_trade_actions(self, task_id: int, actions: list[dict]) -> str:
+        return self._unsupported("التداول التجريبي", actions)
+
+    def _run_device_actions(self, task_id: int, actions: list[dict]) -> str:
+        return self._unsupported("الجهاز", actions)
+
+    def _unsupported(self, label: str, actions: list[dict]) -> str:
+        for action in actions:
+            self.memory.update_action(action["id"], "failed", "غير متاح في هذا الإصدار")
+        return f"**{label}:** غير متاح في هذا الإصدار."
 
     def _run_social_actions(self, task_id: int, actions: list[dict]) -> str:
         """Each approved post is published (or scheduled) on its own; one failure does not stop the others."""

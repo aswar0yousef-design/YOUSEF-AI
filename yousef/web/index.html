@@ -176,6 +176,8 @@
       <h3>حسابات السوشيال</h3>
       <p class="panel-note">صفحات فيسبوك وحسابات إنستغرام التجارية المرتبطة بها. ناشر السوشيال يكتب المنشورات ويقترحها، ولا يُنشر شيء إلا بموافقتك.</p>
       <ul id="social-list" class="lessons"></ul>
+      <h4 class="sub" id="ads-title" hidden>الحسابات الإعلانية</h4>
+      <ul id="ads-list" class="lessons" hidden></ul>
       <h4 class="sub" id="posts-title" hidden>المنشورات المجدولة</h4>
       <ul id="post-list" class="lessons posts" hidden></ul>
       <details class="add-store" id="social-connect">
@@ -187,7 +189,7 @@
         </ol>
         <label for="social-token">رمز Meta</label>
         <input id="social-token" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="EAA...">
-        <p class="panel-note">يجلب يوسف صفحاتك ورمز كل صفحة، ويحفظها مشفّرة على جهازك. حساب إنستغرام يجب أن يكون تجاريًا أو حساب صانع محتوى ومرتبطًا بالصفحة.</p>
+        <p class="panel-note">يجلب يوسف صفحاتك ورمز كل صفحة، ويحفظها مشفّرة على جهازك. حساب إنستغرام يجب أن يكون تجاريًا أو حساب صانع محتوى ومرتبطًا بالصفحة. ولمدير الإعلانات أضف أيضًا <code dir="ltr">ads_read</code> و<code dir="ltr">ads_management</code>، فيربط يوسف حساباتك الإعلانية بالرمز نفسه.</p>
         <button type="button" class="primary" id="btn-social-connect">اربط واحفظ</button>
         <p class="status-line" id="social-status" role="status"></p>
       </details>

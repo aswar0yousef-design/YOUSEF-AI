@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import Settings, data_dir as default_data_dir
 from .core import Orchestrator
 from .integrations import Stores
+from .integrations.meta_ads import AdAccounts
 from .integrations.publisher import SocialPublisher
 from .integrations.social import SocialAccounts
 from .integrations.stores import make_client
@@ -32,6 +33,7 @@ class App:
     social: SocialAccounts
     media: MediaLibrary
     publisher: SocialPublisher
+    ads: AdAccounts
 
     def close(self) -> None:
         self.publisher.stop()
@@ -51,9 +53,10 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     stores = Stores(settings, keystore, store_factory or make_client)
     social = SocialAccounts(settings, keystore, **({"api": meta_api} if meta_api else {}), sleep=meta_sleep)
     media = MediaLibrary(root / "media")
+    ads = AdAccounts(settings, keystore, **({"api": meta_api} if meta_api else {}))
     publisher = SocialPublisher(memory, social, media)
     orchestrator = Orchestrator(memory, router, settings, keystore, stores, social=social, media=media,
-                                publisher=publisher)
+                                publisher=publisher, ads=ads)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
     router.free_gpu = voice.release_gpu  # when Ollama's runner dies, speech gives the graphics card back first
-    return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher)
+    return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher, ads)

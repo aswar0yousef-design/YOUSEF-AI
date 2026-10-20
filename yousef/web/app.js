@@ -24,6 +24,8 @@ const TOOL_LABEL = {
   propose_update: "تعديل مقترح", list_discounts: "عرض العروض", propose_discount: "عرض مقترح",
   list_accounts: "عرض الحسابات", recent_posts: "آخر المنشورات", list_scheduled: "المنشورات المجدولة",
   list_media: "مكتبة الصور", propose_post: "منشور مقترح", propose_cancel: "إلغاء منشور مقترح",
+  list_ad_accounts: "الحسابات الإعلانية", campaigns: "الحملات", adsets: "المجموعات الإعلانية", daily: "النتائج اليومية",
+  propose_pause: "إيقاف مقترح", propose_resume: "تشغيل مقترح", propose_budget: "ميزانية مقترحة",
   propose_end_discount: "إيقاف عرض مقترح", propose_bundle: "باقة مقترحة",
   git_commit: "commit مقترح", git_push: "push مقترح", open_pr: "Pull Request مقترح",
   site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود", check_dependencies: "فحص الحزم",
@@ -37,9 +39,11 @@ const FIELD_LABEL = {
 const PROPOSAL_KIND = {
   store_create_product: "منتج جديد", store_update_product: "تعديل منتج", store_create_discount: "عرض جديد",
   store_end_discount: "إيقاف عرض", store_create_bundle: "باقة جديدة", social_post: "منشور",
-  social_cancel: "إلغاء منشور مجدول",
+  social_cancel: "إلغاء منشور مجدول", ads_pause: "إيقاف إعلان", ads_resume: "تشغيل إعلان", ads_budget: "ميزانية إعلان",
 };
 const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
+const OUTSIDE = ["store_", "social_", "ads_", "trade_", "device_"];
+const isExternal = (a) => OUTSIDE.some((p) => a.kind.startsWith(p));
 const POST_STATUS = {
   scheduled: "مجدول", publishing: "يُنشر الآن", published: "نُشر", failed: "تعذّر", cancelled: "أُلغي", missed: "فات موعده",
 };
@@ -58,7 +62,7 @@ const ACTIVE = new Set(["planning", "running", "waiting"]);
 const $ = (sel, root = document) => root.querySelector(sel);
 const state = {
   tasks: new Map(), open: new Set(), status: null, settings: null, keys: null, agents: [], pollTimer: null, workspaces: [],
-  stores: [], unticked: new Set(), social: [], posts: [], attached: [],
+  stores: [], unticked: new Set(), social: [], posts: [], attached: [], ads: [],
 };
 
 const store = {
@@ -235,7 +239,7 @@ function stepHTML(step, task, hideOutput) {
   }
   const changes = step.changes || [];
   const allActions = step.actions || [];
-  const external = (a) => a.kind.startsWith("store_") || a.kind.startsWith("social_");
+  const external = isExternal;
   const proposals = allActions.filter(external);
   const actions = allActions.filter((a) => !external(a));
   const pendingChanges = changes.filter((c) => c.status === "pending").length;
@@ -265,6 +269,10 @@ function stepHTML(step, task, hideOutput) {
     if (posts) {
       how = pendingProposals.length > 1 ? "أزل علامة ما لا تريد نشره، ثم قرّر." : "راجعه، ثم قرّر.";
       safe = "لن يُنشر شيء قبل موافقتك.";
+    }
+    if (pendingProposals.length && pendingProposals.every((a) => a.kind.startsWith("ads_"))) {
+      how = pendingProposals.length > 1 ? "أزل علامة ما لا تريده، ثم قرّر." : "راجعه، ثم قرّر.";
+      safe = "لن يتغيّر شيء في الإعلانات قبل موافقتك.";
     }
     let approve = "طبّق التعديلات";
     if (pendingProposals.length) approve = "طبّق المحدد";
@@ -327,6 +335,8 @@ function storeParts(proposals) {
   if (now) parts.push(`نشر ${countPosts(now)}`);
   if (later) parts.push(`جدولة ${countPosts(later)}`);
   if (n("social_cancel")) parts.push(`إلغاء ${countPosts(n("social_cancel"))} مجدول`);
+  const ads = n("ads_pause") + n("ads_resume") + n("ads_budget");
+  if (ads) parts.push(`${ads === 1 ? "تغيير واحد" : ads === 2 ? "تغييرين" : `${ads} تغييرات`} في الإعلانات`);
   return parts;
 }
 
@@ -991,7 +1001,23 @@ async function loadSocial() {
   }
   renderSocial();
   $("#attach").hidden = state.social.length === 0;
+  try { state.ads = (await api("GET", "/api/ads")).ads; } catch (e) { state.ads = []; }
+  renderAds();
   await loadPosts();
+}
+
+function renderAds() {
+  const ul = $("#ads-list");
+  ul.replaceChildren();
+  $("#ads-title").hidden = ul.hidden = state.ads.length === 0;
+  for (const a of state.ads) {
+    const li = document.createElement("li");
+    li.className = "ws-item";
+    li.innerHTML = `<div class="ws-head"><p><strong>${esc(a.name)}</strong> <span class="chip"><bdi dir="ltr">${esc(a.currency)}</bdi></span>`
+      + ` <span class="muted"><bdi dir="ltr">${esc(a.id)}</bdi>${a.status && a.status !== "active" ? ` · ${esc(a.status)}` : ""}</span></p>`
+      + `<button type="button" class="link" data-ads-remove="${esc(a.id)}">أزل</button></div>`;
+    ul.appendChild(li);
+  }
 }
 
 async function loadPosts() {
@@ -1124,12 +1150,13 @@ function renderLessons(lessons) {
   }
 }
 
-const NEED_LABEL = { stores: "متجر متصل", workspace: "مجلد مشروع", social: "حساب سوشيال مربوط" };
+const NEED_LABEL = { stores: "متجر متصل", workspace: "مجلد مشروع", social: "حساب سوشيال مربوط", ads: "حساب إعلاني مربوط" };
 
 function agentState(a) {
   if (!a.available) return [false, `في المرحلة ${a.phase}`];
   const needs = a.needs || [];
-  const have = { stores: state.stores.length > 0, workspace: state.workspaces.length > 0, social: state.social.length > 0 };
+  const have = { stores: state.stores.length > 0, workspace: state.workspaces.length > 0, social: state.social.length > 0,
+    ads: state.ads.length > 0 };
   if (!needs.length || needs.some((n) => have[n])) return [true, "يعمل الآن"];
   return [false, `يحتاج ${needs.map((n) => NEED_LABEL[n] || n).join(" أو ")}`];
 }
@@ -1317,10 +1344,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       const data = await api("POST", "/api/social", { token: $("#social-token").value });
       $("#social-token").value = "";
       state.social = data.accounts;
+      state.ads = data.ads || [];
       renderSocial();
+      renderAds();
       renderAgents();
       const names = data.added.map((a) => a.name + (a.ig_username ? ` (+ إنستغرام @${a.ig_username})` : "")).join("، ");
-      line.textContent = `رُبطت: ${names}.`;
+      const ads = state.ads.length ? ` والحسابات الإعلانية: ${state.ads.map((a) => a.name).join("، ")}` : "";
+      line.textContent = `رُبطت: ${names}${ads}.`;
     } catch (err) {
       line.textContent = err.message;
       line.classList.add("is-error");
@@ -1349,6 +1379,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!files.length) return;
     e.preventDefault();
     attachFiles(files);
+  });
+  $("#ads-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-ads-remove]");
+    if (!btn || !confirm("إزالة هذا الحساب الإعلاني من يوسف؟ لا يتأثر الحساب نفسه.")) return;
+    try {
+      state.ads = (await api("DELETE", `/api/ads/${btn.dataset.adsRemove}`)).ads;
+      renderAds();
+      renderAgents();
+    } catch (err) { showHint(err.message, true); }
   });
   $("#post-list").addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-post-act]");
