@@ -35,10 +35,11 @@ from ..integrations.stores import PLATFORM_LABEL
 from ..integrations.vercel import API as VERCEL_API
 from ..models.base import ProviderError
 from ..workspace import Services, Workspace, WorkspaceError, git, registry
-from .agents import AGENTS, available_agents, get_agent
+from .agents import AGENTS, IMAGE_TOOLS as IMAGE_ABILITIES, available_agents, get_agent
 from .coder import run_coder
 from .store_manager import run_store_manager
 from .ads_manager import build_toolbox as build_ads_toolbox, run_ads_manager
+from .designer import build_toolbox as build_design_toolbox, run_designer
 from .social_publisher import build_toolbox as build_social_toolbox, run_social_publisher
 from .tech_manager import build_toolbox, run_tech_manager
 from .jsonutil import extract_json
@@ -158,7 +159,7 @@ def _lessons_text(lessons: list[dict]) -> tuple[list[str], str]:
 
 class Orchestrator:
     def __init__(self, memory: Memory, router: Router, settings, keystore=None, stores=None, social=None,
-                 media=None, publisher=None, ads=None):
+                 media=None, publisher=None, ads=None, images=None):
         self.memory = memory
         self.router = router
         self.settings = settings
@@ -168,6 +169,7 @@ class Orchestrator:
         self.media = media          # media.MediaLibrary
         self.publisher = publisher  # integrations.publisher.SocialPublisher
         self.ads = ads              # integrations.meta_ads.AdAccounts
+        self.images = images        # integrations.images.ImageMaker
         self.github_api = GITHUB_API
         self.vercel_api = VERCEL_API
         self.site_auditor = None  # audit.SiteAuditor; None = live checks over the network
@@ -315,7 +317,8 @@ class Orchestrator:
             tech_step = agent.key == "tech_manager"
             social_step = agent.key == "social_publisher"
             ads_step = agent.key == "ads_manager"
-            tool_step = store_step or tech_step or social_step or ads_step
+            design_step = agent.key == "designer"
+            tool_step = store_step or tech_step or social_step or ads_step or design_step
             # tool agents propose their actions; the approval comes after they work, on the real proposals
             if step["needs_confirmation"] and not (coder_in_project or tool_step):
                 approved = self._wait_for_approval(task_id, step_id)
@@ -344,6 +347,9 @@ class Orchestrator:
                 if ads_step:
                     outcome = self._run_ads_step(task_id, step_id, agent, step, request, history, results,
                                                  lessons, speak, job.store)
+                elif design_step:
+                    outcome = self._run_design_step(task_id, step_id, agent, step, request, history, results,
+                                                    lessons, speak, job.store)
                 elif tech_step:
                     outcome = self._run_tech_step(task_id, step_id, agent, step, request, history, results,
                                                   lessons, speak, ws, job.store)
@@ -391,6 +397,8 @@ class Orchestrator:
             found.add("social")
         if self.ads and self.ads.entries():
             found.add("ads")
+        if self.images and self.images.available:
+            found.add("images")
         return frozenset(found)
 
     def _plan(self, request: str, history: list[dict], lessons: list[dict],
@@ -432,7 +440,7 @@ class Orchestrator:
         if "ads" in connected:
             accounts = ", ".join(f'"{e["name"]}" ({e["currency"]})' for e in self.ads.entries())
             system += "\n\n" + ADS_NOTE.format(accounts=accounts)
-        if connected - {"social", "ads"}:
+        if connected - {"social", "ads", "images"}:
             targets = " and ".join(t for t in (("the connected stores and their live sites" if "stores" in connected else ""),
                                                (f'the project folder "{ws.name}"' if ws else "")) if t)
             others = []
@@ -518,13 +526,26 @@ class Orchestrator:
                          speak: bool, store: str | None) -> str | None:
         """Posts written with the social tools, then approval before anything is published."""
         system = self._system(agent, lessons, speak, social=True)
-        toolbox = build_social_toolbox(self.social, self.memory, self.media, self.stores, store)
+        toolbox = build_social_toolbox(self.social, self.memory, self.media, self.stores, store, self.images)
         try:
             res = run_social_publisher(self.router, toolbox, system, self._step_parts(step, request, history, results))
         except NoModelError as e:
             self._fail_step(task_id, step_id, e)
             return None
         return self._finish_tool_step(task_id, step_id, res, [], toolbox.action_list())
+
+    def _run_design_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
+                         history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],
+                         speak: bool, store: str | None) -> str | None:
+        """Pictures made into the library; nothing leaves the PC except the request to the image model."""
+        system = self._system(agent, lessons, speak, abilities=IMAGE_ABILITIES)
+        toolbox = build_design_toolbox(self.images, self.media, self.stores, store)
+        try:
+            res = run_designer(self.router, toolbox, system, self._step_parts(step, request, history, results))
+        except NoModelError as e:
+            self._fail_step(task_id, step_id, e)
+            return None
+        return self._finish_tool_step(task_id, step_id, res, [], [])
 
     def _run_ads_step(self, task_id: int, step_id: int, agent, step: dict, request: str,
                       history: list[dict], results: list[tuple[dict, str]], lessons: list[dict],

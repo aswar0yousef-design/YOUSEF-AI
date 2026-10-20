@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..integrations.image_tools import ImageToolbox
 from ..integrations.social_tools import SocialToolbox, StoreReader
 from ..models import Router
 from .multitool import MultiToolbox
@@ -26,10 +27,14 @@ Rules:
 - You have at most {limit} tool calls."""
 
 
-def build_toolbox(accounts, memory, media, stores=None, default_store: str | None = None) -> MultiToolbox:
+def build_toolbox(accounts, memory, media, stores=None, default_store: str | None = None,
+                  images=None) -> MultiToolbox:
     social = SocialToolbox(accounts, memory, media)
     reader = StoreReader(stores, default_store) if stores is not None and stores.entries() else None
-    return MultiToolbox(social, reader)
+    maker = ImageToolbox(images, media) if images is not None and images.available else None
+    if maker is not None:
+        maker.tool_list_media = None  # the social tools already list the pictures
+    return MultiToolbox(social, maker, reader)
 
 
 def run_social_publisher(router: Router, toolbox: MultiToolbox, system: str, task_text: str,

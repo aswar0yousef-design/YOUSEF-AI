@@ -31,6 +31,9 @@ SOCIAL_TOOLS = ("For this step you can read the user's connected Facebook Pages 
                 "pictures and their stores' products, and propose posts through the tools described below; posts are "
                 "published only after the user approves. You still cannot change products or orders, send messages, "
                 "buy, trade, or control the computer.")
+IMAGE_TOOLS = ("For this step you can make pictures with the user's OpenAI or Gemini key and read their picture library "
+               "and store products through the tools described below. You still cannot publish, send messages, buy, "
+               "trade, or control the computer.")
 ADS_TOOLS = ("For this step you can read the user's Meta ad accounts (campaigns, ad sets, results) and their stores' "
              "sales, and propose pausing, resuming or rebudgeting through the tools described below; changes happen "
              "only after the user approves. You still cannot create campaigns or ads, publish posts, send messages, "
@@ -154,6 +157,16 @@ AGENTS: dict[str, Agent] = {
             "budget increases.",
             phase=6,
         ),
+        Agent(
+            "designer", "صانع الصور",
+            "Makes pictures for posts, products, offers and ads with the user's OpenAI or Gemini key, from a "
+            "description or from one of their pictures or product photos, and saves them in the picture library.",
+            "writing",
+            "Designer. Turn the request into precise picture descriptions (subject, setting, light, style, colours, "
+            "composition), keep text in pictures short, fit the shape to where the picture will be used, and make "
+            "only as many pictures as asked.",
+            phase=6,
+        ),
         Agent("trading_analyst", "محلل التداول", "Market analysis, alerts and paper trading.",
               "analysis", available=False, phase=7),
         Agent("device_control", "التحكم بالجهاز", "Controls apps and files on this PC.",
@@ -164,10 +177,10 @@ AGENTS: dict[str, Agent] = {
 
 # agents that also need something connected before the planner may use them (any one of these)
 NEEDS = {"store_manager": ("stores",), "tech_manager": ("stores", "workspace"), "social_publisher": ("social",),
-         "ads_manager": ("ads",)}
+         "ads_manager": ("ads",), "designer": ("images",)}
 # what an agent becomes when what it needs is missing: advice instead of tools
 FALLBACK = {"store_manager": "analyst", "tech_manager": "coder", "social_publisher": "writer",
-            "ads_manager": "analyst"}
+            "ads_manager": "analyst", "designer": "writer"}
 
 
 def _usable(agent: Agent, connected) -> bool:

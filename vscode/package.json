@@ -2,7 +2,7 @@
   "name": "yousef-ai",
   "displayName": "YOUSEF AI",
   "description": "يوسف داخل VS Code: اسأل عن الكود، أصلحه، وراجع تعديلاته في محرر الفروقات قبل تطبيقها. يعمل مع خادم يوسف المحلي على جهازك.",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "publisher": "yousef-ai",
   "license": "SEE LICENSE IN README.md",
   "icon": "media/icon.png",

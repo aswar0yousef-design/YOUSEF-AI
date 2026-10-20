@@ -495,3 +495,17 @@ h4.sub { margin: 14px 0 6px; font-size: 15px; }
 .connect-item span { font-size: 13px; color: var(--muted); }
 .connect-item:hover { background: var(--door-tint); }
 .version-line { margin: 14px 0 0; font-size: 12px; color: var(--muted); }
+
+/* pictures: the library in settings and the ones an agent made */
+.media-head { align-items: center; justify-content: space-between; margin-top: 18px; }
+.media-head h4.sub { margin: 0; }
+.media-grid { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.media-grid li { display: grid; gap: 2px; font-size: 12px; min-width: 0; }
+.media-grid li.empty-media { grid-column: 1 / -1; font-size: 14px; }
+.media-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.media-grid span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.media-grid button { justify-self: start; font-size: 12px; }
+.made-media { list-style: none; margin: 10px 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.made-media li { display: grid; gap: 4px; justify-items: start; }
+.made-media img { width: 160px; max-width: 42vw; aspect-ratio: 1; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; }
+.made-media button { font-size: 13px; }

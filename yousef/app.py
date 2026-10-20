@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import Settings, data_dir as default_data_dir
 from .core import Orchestrator
 from .integrations import Stores
+from .integrations.images import ImageMaker
 from .integrations.meta_ads import AdAccounts
 from .integrations.publisher import SocialPublisher
 from .integrations.social import SocialAccounts
@@ -34,6 +35,7 @@ class App:
     media: MediaLibrary
     publisher: SocialPublisher
     ads: AdAccounts
+    images: ImageMaker
 
     def close(self) -> None:
         self.publisher.stop()
@@ -42,7 +44,7 @@ class App:
 
 
 def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_backend=None,
-              store_factory=None, meta_api: str | None = None, meta_sleep=None) -> App:
+              store_factory=None, meta_api: str | None = None, meta_sleep=None, image_urls: dict | None = None) -> App:
     root = Path(data_dir) if data_dir else default_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     settings = Settings(root / "settings.json")
@@ -54,9 +56,11 @@ def build_app(data_dir: Path | None = None, factory=None, cipher=None, voice_bac
     social = SocialAccounts(settings, keystore, **({"api": meta_api} if meta_api else {}), sleep=meta_sleep)
     media = MediaLibrary(root / "media")
     ads = AdAccounts(settings, keystore, **({"api": meta_api} if meta_api else {}))
+    images = ImageMaker(settings, keystore, **(image_urls or {}))
     publisher = SocialPublisher(memory, social, media)
     orchestrator = Orchestrator(memory, router, settings, keystore, stores, social=social, media=media,
-                                publisher=publisher, ads=ads)
+                                publisher=publisher, ads=ads, images=images)
     voice = VoiceEngine(settings, root, backend_factory=voice_backend)
     router.free_gpu = voice.release_gpu  # when Ollama's runner dies, speech gives the graphics card back first
-    return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher, ads)
+    return App(root, settings, keystore, memory, router, orchestrator, voice, stores, social, media, publisher, ads,
+               images)

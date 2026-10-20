@@ -52,6 +52,8 @@ DEFAULT_SETTINGS: dict = {
     "social": [],
     # Meta ad accounts: [{"id": "act_..", "name", "currency", "status"}]; the token lives in keys.dat
     "ads": [],
+    # making pictures with the user's OpenAI or Gemini key; empty model = Yousef's default list
+    "images": {"provider": "auto", "openai_model": "", "gemini_model": ""},
     # local speech-to-text (faster-whisper); spoken replies are set in the browser
     "voice": {
         "model": "large-v3-turbo",  # small and below misunderstand Arabic too often
@@ -130,6 +132,7 @@ def _validate(merged: dict) -> dict:
     s["stores"] = _validate_stores(s.get("stores"))
     s["social"] = _validate_social(s.get("social"))
     s["ads"] = _validate_ads(s.get("ads"))
+    s["images"] = _validate_images(s.get("images"))
     return {k: s[k] for k in DEFAULT_SETTINGS}
 
 
@@ -174,6 +177,19 @@ def _validate_social(items) -> list:
         ids.add(pid)
         out.append({"id": pid, "name": name, "ig_id": ig_id, "ig_username": ig_user})
     return out
+
+
+def _validate_images(value) -> dict:
+    if not isinstance(value, dict):
+        raise SettingsError("images must be an object")
+    v = {k: value.get(k, DEFAULT_SETTINGS["images"][k]) for k in DEFAULT_SETTINGS["images"]}
+    if v["provider"] not in ("auto", "openai", "gemini", "off"):
+        raise SettingsError("images.provider must be auto, openai, gemini or off")
+    for k in ("openai_model", "gemini_model"):
+        v[k] = str(v[k] or "").strip()
+        if len(v[k]) > 80 or any(c.isspace() for c in v[k]):
+            raise SettingsError(f"images.{k} must be a model id")
+    return v
 
 
 def _validate_ads(items) -> list:

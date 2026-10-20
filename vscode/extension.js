@@ -132,6 +132,12 @@ class ChatView {
         case "openDashboard":
           await vscode.env.openExternal(vscode.Uri.parse(serverUrl()));
           break;
+        case "openMedia":
+          // a picture an agent made, opened from Yousef's library in the browser
+          if (/^img-[0-9a-f]{16}\.(?:jpg|png)$/.test(msg.name || "")) {
+            await vscode.env.openExternal(vscode.Uri.parse(`${serverUrl()}/api/media/${msg.name}`));
+          }
+          break;
         case "retry":
           await this.refreshStatus();
           break;

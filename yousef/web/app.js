@@ -23,13 +23,14 @@ const TOOL_LABEL = {
   list_orders: "عرض الطلبات", sales_summary: "ملخص المبيعات", propose_product: "منتج مقترح",
   propose_update: "تعديل مقترح", list_discounts: "عرض العروض", propose_discount: "عرض مقترح",
   list_accounts: "عرض الحسابات", recent_posts: "آخر المنشورات", list_scheduled: "المنشورات المجدولة",
-  list_media: "مكتبة الصور", propose_post: "منشور مقترح", propose_cancel: "إلغاء منشور مقترح",
+  list_media: "مكتبة الصور", generate_image: "صورة جديدة", propose_post: "منشور مقترح", propose_cancel: "إلغاء منشور مقترح",
   list_ad_accounts: "الحسابات الإعلانية", campaigns: "الحملات", adsets: "المجموعات الإعلانية", daily: "النتائج اليومية",
   propose_pause: "إيقاف مقترح", propose_resume: "تشغيل مقترح", propose_budget: "ميزانية مقترحة",
   propose_end_discount: "إيقاف عرض مقترح", propose_bundle: "باقة مقترحة",
   git_commit: "commit مقترح", git_push: "push مقترح", open_pr: "Pull Request مقترح",
   site_check: "فحص الموقع", store_health: "صحة المتجر", scan_code: "فحص الكود", check_dependencies: "فحص الحزم",
 };
+const MEDIA_NAME = /^media:img-[0-9a-f]{16}\.(?:jpg|png)$/;
 const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
 const FIELD_LABEL = {
   title: "العنوان", description: "الوصف", price: "السعر", compare_at_price: "السعر قبل الخصم",
@@ -231,6 +232,14 @@ function stepHTML(step, task, hideOutput) {
     h += `<details class="trace"><summary>ما فعله ${esc(agentName(step.agent))}: ${trace.length} ${trace.length > 10 ? "أداة" : "أدوات"}</summary><ul>`
       + trace.map((t) => `<li class="${t.ok ? "" : "bad"}"><span>${esc(TOOL_LABEL[t.tool] || t.tool)}</span> <bdi dir="ltr">${esc(t.target || "")}</bdi>${t.ok ? (t.note ? ` <small dir="auto">${esc(t.note)}</small>` : "") : ` <em>${esc(t.note || "تعذّر")}</em>`}</li>`).join("")
       + "</ul></details>";
+    const made = [...new Set(trace.filter((t) => t.ok && t.tool === "generate_image" && MEDIA_NAME.test(t.note || ""))
+      .map((t) => t.note.slice(6)))];
+    if (made.length) {
+      h += `<ul class="made-media" aria-label="الصور التي صنعها">${made.map((n) => `<li><a href="/api/media/${esc(n)}" target="_blank" rel="noopener">`
+        + `<img src="/api/media/${esc(n)}" alt="صورة صنعها يوسف" loading="lazy"></a>`
+        + (state.social.length ? `<button type="button" class="link" data-act="use-media" data-media="${esc(n)}">أرفقها بمنشور</button>` : "")
+        + "</li>").join("")}</ul>`;
+    }
     const audits = trace.filter((t) => t.ok && AUDIT_TOOLS.has(t.tool) && t.note && t.note !== "مكرر");
     if (audits.length) {
       h += `<ul class="audits" aria-label="نتائج الفحص">${audits.map((t) => `<li class="${/حرج|عالٍ/.test(t.note) ? "hot" : ""}">`
@@ -655,6 +664,16 @@ async function onTaskClick(e) {
     return;
   }
   const act = btn.dataset.act;
+  if (act === "use-media") {
+    const name = btn.dataset.media;
+    if (!state.attached.some((m) => m.name === name)) {
+      state.attached.push({ name, url: `/api/media/${name}`, label: "صورة صنعها يوسف" });
+    }
+    renderAttached();
+    showHint("أُرفقت الصورة. اكتب طلب المنشور ثم أرسله.");
+    els.input.focus();
+    return;
+  }
   const taskId = Number(btn.dataset.task);
   const task = state.tasks.get(taskId);
   try {
@@ -1092,6 +1111,43 @@ async function attachFiles(files) {
   renderAttached();
 }
 
+const IMAGE_PROVIDER = { openai: "OpenAI", gemini: "Gemini" };
+
+function renderImages() {
+  $("#image-provider").value = state.settings.images?.provider || "auto";
+  const ready = state.status.images || [];
+  const line = $("#images-status");
+  line.classList.remove("is-error");
+  line.textContent = $("#image-provider").value === "off"
+    ? "صنع الصور متوقف؛ يستخدم الوكلاء صور مكتبتك فقط."
+    : (ready.length ? `جاهز: يصنع الصور بـ ${ready.map((p) => IMAGE_PROVIDER[p]).join(" ثم ")}.`
+      : "أضف مفتاح OpenAI أو Gemini في «النماذج السحابية» ليعمل صانع الصور.");
+}
+
+async function loadMedia() {
+  let files = [];
+  try { files = (await api("GET", "/api/media")).files; } catch (e) { /* the panel stays empty */ }
+  renderMedia(files);
+}
+
+function renderMedia(files) {
+  const ul = $("#media-grid");
+  ul.replaceChildren();
+  if (!files.length) {
+    const li = document.createElement("li");
+    li.className = "muted empty-media";
+    li.textContent = "لا توجد صور بعد.";
+    ul.appendChild(li);
+  }
+  for (const f of files.slice(0, 60)) {
+    const li = document.createElement("li");
+    li.innerHTML = `<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.label || "صورة")}" loading="lazy"></a>`
+      + `<span dir="auto" title="${esc(f.label || f.name)}">${esc(f.label || f.name)}</span>`
+      + `<button type="button" class="link" data-media-del="${esc(f.name)}">احذف</button>`;
+    ul.appendChild(li);
+  }
+}
+
 async function loadStores() {
   try {
     state.stores = (await api("GET", "/api/stores")).stores;
@@ -1150,13 +1206,16 @@ function renderLessons(lessons) {
   }
 }
 
-const NEED_LABEL = { stores: "متجر متصل", workspace: "مجلد مشروع", social: "حساب سوشيال مربوط", ads: "حساب إعلاني مربوط" };
+const NEED_LABEL = {
+  stores: "متجر متصل", workspace: "مجلد مشروع", social: "حساب سوشيال مربوط", ads: "حساب إعلاني مربوط",
+  images: "مفتاح OpenAI أو Gemini",
+};
 
 function agentState(a) {
   if (!a.available) return [false, `في المرحلة ${a.phase}`];
   const needs = a.needs || [];
   const have = { stores: state.stores.length > 0, workspace: state.workspaces.length > 0, social: state.social.length > 0,
-    ads: state.ads.length > 0 };
+    ads: state.ads.length > 0, images: (state.status?.images || []).length > 0 };
   if (!needs.length || needs.some((n) => have[n])) return [true, "يعمل الآن"];
   return [false, `يحتاج ${needs.map((n) => NEED_LABEL[n] || n).join(" أو ")}`];
 }
@@ -1216,6 +1275,8 @@ async function openDrawer() {
     await loadWorkspaces();
     await loadStores();
     await loadSocial();
+    renderImages();
+    await loadMedia();
     renderAgents();
     renderStoreForm();
     $("#ws-status").textContent = "";
@@ -1357,6 +1418,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     } finally {
       btn.disabled = false;
     }
+  });
+  $("#image-provider").addEventListener("change", async (e) => {
+    try {
+      state.settings = (await api("PUT", "/api/settings", { images: { provider: e.target.value } })).settings;
+      await loadStatus(true);
+      renderImages();
+      renderAgents();
+    } catch (err) {
+      $("#images-status").textContent = err.message;
+      $("#images-status").classList.add("is-error");
+    }
+  });
+  $("#btn-media-upload").addEventListener("click", () => $("#media-file").click());
+  $("#media-file").addEventListener("change", async (e) => {
+    for (const file of [...e.target.files]) {
+      try { await uploadImage(file); } catch (err) { $("#images-status").textContent = err.message; }
+    }
+    e.target.value = "";
+    await loadMedia();
+  });
+  $("#media-grid").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-media-del]");
+    if (!btn || !confirm("حذف هذه الصورة من مكتبة يوسف؟ المنشورات التي نُشرت بها لا تتأثر.")) return;
+    try {
+      renderMedia((await api("DELETE", `/api/media/${btn.dataset.mediaDel}`)).files);
+    } catch (err) { showHint(err.message, true); }
   });
   $("#attach").addEventListener("click", () => $("#attach-file").click());
   $("#attach-file").addEventListener("change", async (e) => {

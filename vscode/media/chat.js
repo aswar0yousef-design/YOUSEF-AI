@@ -6,7 +6,7 @@
 
   const AGENTS = {
     general: "المساعد العام", coder: "المبرمج", writer: "صانع المحتوى", analyst: "المحلل", store_manager: "مدير المتاجر",
-    tech_manager: "المدير التقني", social_publisher: "ناشر السوشيال", ads_manager: "مدير الإعلانات",
+    tech_manager: "المدير التقني", social_publisher: "ناشر السوشيال", ads_manager: "مدير الإعلانات", designer: "صانع الصور",
     trading_analyst: "محلل التداول", device_control: "التحكم بالجهاز",
   };
   const TOOL_LABEL = {
@@ -21,7 +21,7 @@
     list_scheduled: "المنشورات المجدولة", list_media: "مكتبة الصور", propose_post: "منشور مقترح",
     propose_cancel: "إلغاء منشور مقترح", list_ad_accounts: "الحسابات الإعلانية", campaigns: "الحملات",
     adsets: "المجموعات الإعلانية", daily: "النتائج اليومية", propose_pause: "إيقاف مقترح", propose_resume: "تشغيل مقترح",
-    propose_budget: "ميزانية مقترحة",
+    propose_budget: "ميزانية مقترحة", generate_image: "صورة جديدة",
   };
   const PLATFORM_AR = { facebook: "فيسبوك", instagram: "إنستغرام" };
   const AUDIT_TOOLS = new Set(["site_check", "store_health", "scan_code", "check_dependencies"]);
@@ -228,6 +228,11 @@
         + trace.map((t) => `<li class="${t.ok ? "" : "bad"}">${esc(TOOL_LABEL[t.tool] || t.tool)} <bdi dir="ltr">${esc(t.target || "")}</bdi>`
           + `${t.note ? ` <span class="muted" dir="auto">${esc(t.note)}</span>` : ""}</li>`).join("")
         + `</ul></details>`;
+      const made = trace.filter((t) => t.ok && t.tool === "generate_image" && /^media:img-[0-9a-f]{16}\.(?:jpg|png)$/.test(t.note || ""));
+      if (made.length) {
+        h += `<p class="row">${made.map((t, i) => `<button type="button" class="link" data-act="media" data-media="${esc(t.note.slice(6))}">`
+          + `افتح الصورة ${made.length > 1 ? i + 1 : ""}</button>`).join("")}</p>`;
+      }
       const audits = trace.filter((t) => t.ok && AUDIT_TOOLS.has(t.tool) && t.note && t.note !== "مكرر");
       if (audits.length) {
         h += `<ul class="audits">${audits.map((t) => `<li class="${/حرج|عالٍ/.test(t.note) ? "hot" : ""}"><b>${esc(TOOL_LABEL[t.tool])}</b>`
@@ -363,6 +368,7 @@
     else if (act === "again" && task) vscode.postMessage({ type: "send", text: task.request, attach: false });
     else if (act === "retry") vscode.postMessage({ type: "retry" });
     else if (act === "dashboard") vscode.postMessage({ type: "openDashboard" });
+    else if (act === "media") vscode.postMessage({ type: "openMedia", name: btn.dataset.media });
     else if (act === "new") vscode.postMessage({ type: "newConversation" });
   });
 

@@ -329,6 +329,7 @@ class Api:
             "ollama": self.app.router.ollama_status(refresh=refresh),
             "cloud": cloud,
             "keys_encrypted": self.app.keystore.secure,
+            "images": self.app.images.providers(),
             "data_dir": str(self.app.data_dir),
         }
 
